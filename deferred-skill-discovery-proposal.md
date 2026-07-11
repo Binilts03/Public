@@ -3,13 +3,13 @@
 Preserving implicit skill routing when the model-visible catalog reaches its context budget
 
 Date: July 12, 2026  
-Status: Revised problem statement and minimal product experiment
+Status: Proposal for product and engineering review
 
 ## Executive summary
 
 Codex already handles large skill collections more carefully than a simple directory scan would suggest. It loads active skills into a cached, scope-aware host snapshot, resolves explicit skill mentions from the full catalog, provides the client with a complete `skills/list` API, watches local skill roots for changes, aliases long paths when useful, and limits the model-visible skill catalog to 2% of the model context window. Full `SKILL.md` instructions are loaded only after a skill is selected.
 
-This means the original concern is not a universal token-growth defect. Codex already bounds that cost. The narrower problem appears only when the model-visible catalog reaches its budget: descriptions may be shortened, and eventually some implicitly invokable skills are omitted from the model-visible list. Explicit `$skill` invocation and the skill picker can still use the full host catalog, but natural-language implicit routing cannot select metadata the model never received.
+This is not a universal token-growth defect because Codex already bounds that cost. The narrower problem appears only when the model-visible catalog reaches its budget: descriptions may be shortened, and eventually some implicitly invokable skills are omitted from the model-visible list. Explicit `$skill` invocation and the skill picker can still use the full host catalog, but natural-language implicit routing cannot select metadata the model never received.
 
 The proposed change is therefore small:
 
@@ -33,9 +33,9 @@ The current open-source implementation adds important detail:
 - A host skill provider already maps the host snapshot into an authority-aware list and read contract.
 - Model-facing `skills.list` and `skills.read` tools exist for orchestrator-owned skills, although host-owned catalog search is not currently exposed through that interface.
 
-These findings remove most of the infrastructure proposed in the earlier draft.
+These existing components narrow the required change to overflow discovery for implicit routing.
 
-## Corrected problem statement
+## Problem statement
 
 This is a threshold problem, not a problem every Codex user experiences.
 
@@ -239,7 +239,7 @@ Acceptance criteria for an experiment:
 - Search output is bounded and lower than the metadata it replaces.
 - Current behavior remains available as a fallback.
 
-Numeric quality thresholds should be set after establishing a baseline. The earlier draft's specific latency and percentage targets were arbitrary and have been removed.
+Numeric quality thresholds should be set after establishing a baseline rather than chosen without evidence.
 
 ## Rollout
 
@@ -279,7 +279,7 @@ This is available today and may be the right operational advice. It shifts catal
 
 ### Expose full host `skills.list` and `skills.read` tools
 
-This would reuse the existing orchestrator tool shape, but listing the entire host catalog on demand can recreate the original context cost. A bounded catalog-search operation is better suited to implicit discovery. Host list and read support may still be useful for other workflows.
+This would reuse the existing orchestrator tool shape, but listing the entire host catalog on demand can recreate the same context cost. A bounded catalog-search operation is better suited to implicit discovery. Host list and read support may still be useful for other workflows.
 
 ### Build a persistent semantic index
 
