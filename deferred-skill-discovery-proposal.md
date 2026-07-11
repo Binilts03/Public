@@ -1,300 +1,158 @@
-# Proposal: overflow-aware skill discovery for Codex
+# Overflow-aware skill discovery in Codex
 
-Preserving implicit skill routing when the model-visible catalog reaches its context budget
+A proposal for preserving implicit skill routing when the visible catalog reaches its context budget
 
 Date: July 12, 2026  
-Status: Proposal for product and engineering review
+Status: Submitted for product and engineering review
 
-## Executive summary
+## Summary
 
-Codex already handles large skill collections more carefully than a simple directory scan would suggest. It loads active skills into a cached, scope-aware host snapshot, resolves explicit skill mentions from the full catalog, provides the client with a complete `skills/list` API, watches local skill roots for changes, aliases long paths when useful, and limits the model-visible skill catalog to 2% of the model context window. Full `SKILL.md` instructions are loaded only after a skill is selected.
+I use Codex with a large collection of installed skills. My concern is not that Codex loads every `SKILL.md` into every prompt. It does not. Codex already uses progressive disclosure and limits the visible skill catalog to 2% of the model's context window. The full instructions are loaded only after a skill is selected.
 
-This is not a universal token-growth defect because Codex already bounds that cost. The narrower problem appears only when the model-visible catalog reaches its budget: descriptions may be shortened, and eventually some implicitly invokable skills are omitted from the model-visible list. Explicit `$skill` invocation and the skill picker can still use the full host catalog, but natural-language implicit routing cannot select metadata the model never received.
+The issue is narrower. Once the catalog reaches that limit, Codex shortens descriptions and may eventually omit some implicitly invokable skills from the model-visible list. Those skills still exist in Codex's host catalog. They can still appear in the skill picker and can still be invoked explicitly with `$skill`. But the model cannot select an omitted skill from an ordinary natural-language request because it never sees that skill's metadata.
 
-The proposed change is therefore small:
+I am proposing an experiment for that overflow case only. When the renderer has to omit skills, Codex could search the existing host catalog and expose a few relevant candidates. Nothing should change while the catalog fits normally.
 
-1. Instrument how often truncation and omission occur and whether they correlate with missed implicit routing.
-2. When skills are actually omitted, expose an overflow-search capability backed by the existing host skill snapshot.
-3. Compare model-triggered search with automatic retrieval before changing default behavior.
+This can be tested without building a new database, watcher, plugin scanner, autocomplete system, or semantic index. Codex already has most of the machinery needed.
 
-The minimum viable experiment requires no new persistent database, filesystem watcher, plugin scanner, skill format, semantic index, or autocomplete system. Those components already exist or are unnecessary for the first test.
+## What Codex already handles
 
-## What Codex already does
+The public documentation explains the basic progressive-disclosure model. Codex begins with skill names, descriptions, and paths, then reads the selected `SKILL.md`. The visible catalog has a 2% context budget, with an 8,000-character fallback when the context size is unknown. Descriptions are shortened before entries are omitted.
 
-The public documentation says Codex uses progressive disclosure. The model initially sees each implicitly invokable skill's name, description, and path, while the full `SKILL.md` is loaded only after selection. The initial skill list is limited to 2% of the model context window, or 8,000 characters when the context window is unknown. Codex shortens descriptions first and may omit skills if the minimum metadata still does not fit.
+I also reviewed the current open-source implementation. It already contains:
 
-The current open-source implementation adds important detail:
+- A `SkillsService` that discovers skills, applies configuration, and caches immutable snapshots by working directory and effective configuration
+- An app-server `skills/list` endpoint that uses active plugin roots and current settings
+- A `SkillsWatcher` that invalidates cached skill state when local files change
+- Path aliasing to reduce catalog cost
+- Scope-aware ordering when everything cannot fit
+- Renderer metrics for shortened descriptions and omitted entries
+- Explicit mention resolution against the full catalog before the bounded model-visible list is constructed
+- A host provider that maps `HostSkillsSnapshot` into the skills extension's list and read model
 
-- `SkillsService` discovers host skills, applies configuration, caches immutable snapshots by working directory and effective configuration, and exposes cache invalidation.
-- The app server exposes `skills/list` using the active plugin roots and current configuration.
-- `SkillsWatcher` watches applicable local roots, clears the cache when files change, and emits a `skills/changed` notification.
-- The renderer tries absolute and aliased paths, shortens descriptions before omission, records omission and truncation metrics, and orders protected scopes before user-scoped skills.
-- The skills extension resolves explicit mentions from the full turn catalog before constructing the bounded model-visible catalog.
-- A host skill provider already maps the host snapshot into an authority-aware list and read contract.
-- Model-facing `skills.list` and `skills.read` tools exist for orchestrator-owned skills, although host-owned catalog search is not currently exposed through that interface.
+This matters because it changes the shape of the solution. Codex does not need another general-purpose skill registry. It needs a way to search the active host catalog when part of that catalog is absent from model context.
 
-These existing components narrow the required change to overflow discovery for implicit routing.
+## The specific gap
 
-## Problem statement
+The current behavior has three cases.
 
-This is a threshold problem, not a problem every Codex user experiences.
+First, the complete metadata fits. There is no problem to solve, and adding retrieval would only create latency and complexity.
 
-For small and medium catalogs, the current implementation is simpler and likely preferable. Every implicitly invokable skill can remain visible, descriptions retain enough trigger language, and no retrieval step is needed.
+Second, descriptions are shortened but all skills remain visible. This might affect routing, but that should be measured. A clear skill name and a shortened description may still be enough.
 
-When the catalog reaches its budget, Codex degrades in two stages:
+Third, some skills are omitted. This is the case with the strongest failure mode. An omitted skill cannot participate in implicit selection because the model has no evidence that it exists.
 
-1. Descriptions are shortened while skill names and paths remain visible.
-2. If minimum metadata still cannot fit, lower-priority skills are omitted from the model-visible list.
+The full host catalog is still available outside the rendered prompt. Explicit mentions are resolved from it, and the client can obtain it through `skills/list`. The missing piece is catalog-level discovery for natural-language requests.
 
-The first stage may or may not cause meaningful routing failures. A well-named skill can remain discoverable from a shortened description. The second stage has a clearer limitation: an omitted skill cannot be selected implicitly from natural language because the model has no metadata for it.
+This is a scale threshold, not a universal Codex defect. Before changing the product, it would be useful to know how often real installations cross that threshold and whether omission leads to observable routing failures.
 
-The full catalog still exists outside the rendered prompt. Explicit mentions and client-side browsing are separate paths and should not be described as broken by metadata omission.
+## A small experiment
 
-The product question is therefore:
+### Start with measurement
 
-> When the current renderer must omit implicitly invokable skills, can Codex recover relevant overflow skills without placing the full catalog in model context?
+The renderer already knows when it shortens or omits metadata. Codex could expose or aggregate the following facts:
 
-## Evidence and uncertainty
+- Number of active, implicitly invokable skills
+- Metadata size before and after budgeting
+- Number of descriptions shortened
+- Number and scope of skills omitted
+- Whether the eventual skill selection was explicit or implicit
+- Cases where a user explicitly invokes an omitted skill after an earlier request did not select it
 
-A local exploratory scanner found more than 200 candidate skill files across user directories and plugin caches. That result explains how a user can reach the documented budget, but it is not reliable product evidence by itself. A raw cache scan can count inactive plugin versions, duplicate skills, disabled skills, and files outside the effective configuration.
+These measurements are more reliable than scanning directories. A raw filesystem scan can count disabled skills, duplicate entries, inactive plugin versions, and stale cache files.
 
-The Codex team's own renderer report is the authoritative measurement because it operates on the active, configured host snapshot. Before prioritizing a routing change, Codex should measure:
+The relevant cost is model-visible context, not a claimed per-turn bill. Prompt caching and subscription accounting are separate from the question of whether useful routing metadata occupies the context window.
 
-- Active implicitly invokable skill count
-- Full metadata cost before budgeting
-- Rendered metadata cost
-- Number and extent of shortened descriptions
-- Number and scope of omitted skills
-- Whether the selected skill was explicit or implicit
-- Cases where users subsequently invoke an omitted skill explicitly after an implicit miss
-- Catalog-budget warnings shown per active installation
+### Search only when omission occurs
 
-The proposal should not claim a specific recurring billing cost. Prompt caching, request construction, subscription accounting, and backend reuse are separate concerns. The defensible claim is about model-visible context occupancy and missing routing metadata.
+If `SkillRenderReport.omitted_count` is zero, Codex should behave exactly as it does now.
 
-## Goals
-
-- Preserve current behavior when no skills are omitted.
-- Improve implicit routing recall for skills outside the bounded visible catalog.
-- Reuse the active host snapshot and existing configuration semantics.
-- Keep explicit invocation and the client skill picker unchanged.
-- Avoid sending the complete overflow catalog to the model.
-- Add no network dependency and execute no skill code during discovery.
-- Measure false positives, false negatives, latency, and context cost before changing defaults.
-- Fall back to the current renderer if overflow discovery is unavailable.
-
-## Non-goals
-
-- Replacing the current bounded catalog for all users
-- Building another filesystem index or watcher
-- Changing `SKILL.md` or `agents/openai.yaml`
-- Reworking plugin installation or activation
-- Adding embeddings in the first implementation
-- Searching inside a selected skill's reference files
-- Solving general tool discovery
-- Changing explicit `$skill` resolution or autocomplete
-
-## Proposed minimum viable experiment
-
-### 1. Use the existing renderer report as the gate
-
-Run overflow discovery only when `SkillRenderReport.omitted_count` is greater than zero. If the current catalog fits after path aliasing and description shortening, preserve today's behavior exactly.
-
-Description truncation can be instrumented separately. It should not trigger a new retrieval path until data shows that truncation alone causes material routing failures.
-
-### 2. Search the existing active host catalog
-
-Add a catalog-level operation with a narrow contract, for example:
+If entries are omitted, Codex could expose a bounded operation such as:
 
 ```text
 skills.search_catalog(query, limit)
 ```
 
-The operation should search enabled, prompt-visible host skill metadata from the same `HostSkillsSnapshot` already used to render the turn catalog. It should not rescan the filesystem or inspect raw plugin cache directories.
+The search should run over enabled, implicitly invokable metadata in the existing `HostSkillsSnapshot`. It should not rescan the filesystem or enumerate plugin cache directories.
 
-Each result should contain only the metadata needed for selection:
+A result needs only the qualified name, description or short description, scope, source identity, and an opaque handle that Codex can use to load the skill. The number of results and total output must be capped.
 
-- Qualified name
-- Description or short description
-- Scope and source identity
-- Opaque package or resource handle
-- Whether the entry was omitted from the current model-visible catalog
+The skills extension already has a provider `search` method, but that request is scoped to resources inside a known package. Catalog discovery is a different operation and should use a separate contract.
 
-The result count and total output size must be bounded.
+### Keep the first ranking method boring
 
-The existing provider `search` method is package-oriented and intended for searching resources inside a known package. Catalog discovery is a different operation and should have a separate name and request shape.
+Skill descriptions are written specifically for routing. A first implementation can rank exact names, qualified names, phrases, tokens, and spelling variations. Repository-scoped skills can receive a small boost when the task belongs to that repository.
 
-### 3. Start with deterministic lexical ranking
+There is no need to begin with embeddings. If lexical retrieval performs poorly, the evaluation will provide concrete examples for semantic reranking. Starting with a persistent vector index would add storage, invalidation, privacy, and dependency questions before anyone knows whether it is necessary.
 
-The first implementation should rank skill names, qualified names, descriptions, short descriptions, and trigger metadata using inexpensive local matching. Exact name matches should dominate. Token, phrase, and trigram matching are sufficient for an experiment.
+## Two ways to use the search
 
-Do not add embeddings until the lexical baseline is measured. Skill descriptions are already written as routing metadata, so lexical retrieval may be adequate. If it is not, the evaluation will show where semantic reranking helps.
-
-### 4. Test two invocation strategies
-
-#### Strategy A: model-triggered search
-
-When the renderer omits skills, append a compact notice such as:
+One option is model-triggered search. When entries are omitted, the visible catalog would include a short notice:
 
 ```text
 Additional enabled skills were omitted from this bounded list. Use skills.search_catalog when the task may require an unlisted skill.
 ```
 
-Advantages:
+This avoids retrieval when the visible list is sufficient and lets the model reformulate its query. The downside is that the model may fail to call the search tool, and every call adds a round trip.
 
-- No retrieval work when the visible catalog is sufficient
-- The model can reformulate the search query
-- Search results enter context only when requested
+The other option is automatic retrieval. When omission occurs, the harness would search overflow metadata using the current user message and merge a few candidates into the visible list before the model runs. This avoids a tool round trip, but retrieval would run on every affected turn. Weak matches could also crowd out more useful metadata.
 
-Risks:
+I do not think the proposal should choose between these approaches without an evaluation. Both are small enough to test.
 
-- The model may not call the tool when it should
-- A tool round trip adds latency
-- A generic instruction may itself be ignored
+Explicit `$skill` mentions should remain untouched. The skill picker should continue using the full app-server list. This proposal is only about implicit discovery of overflow entries.
 
-#### Strategy B: automatic overflow retrieval
+## Scope, safety, and precedence
 
-When omission occurs, the harness searches overflow metadata using the current user message before the first model call and merges a small number of candidates into the visible catalog.
+Search results must come from the same configured snapshot that Codex already trusts for the turn. Disabled skills, inactive plugin versions, and skills with implicit invocation disabled must not appear.
 
-Advantages:
+Exact qualified-name matches should rank first. Repository scope can influence relevance, but search should retain source identity when two active skills share a display name. The current system, admin, repository, and user scope rules should continue to determine which skills are active.
 
-- No extra model round trip
-- The model always receives likely overflow candidates
+Searching metadata must not execute scripts, install dependencies, open references, or read arbitrary paths. Skill contents should still be loaded through the owning provider and the existing approval and trust boundaries. Opaque handles are preferable to paths in search results.
 
-Risks:
+## How to evaluate it
 
-- Retrieval runs on every affected turn
-- Poor ranking can crowd out better visible metadata
-- The raw user message may not contain enough routing language
+The important metric is whether Codex finds the right skill, not how much metadata it can remove.
 
-Both strategies should be evaluated. The proposal should not choose one without data.
+A useful test set would include ordinary requests with one intended skill, ambiguous requests, and requests where no skill should run. It should cover intended skills both inside and outside the visible budget. It should also include duplicate names, repository and user scope conflicts, disabled implicit invocation, plugin upgrades with stale cache versions, and skill installation or removal during a running session.
 
-### 5. Preserve existing explicit behavior
+Three conditions should be compared:
 
-Explicit skill mentions should continue to resolve from the full catalog and load the selected skill directly. The skill picker should continue using the app server's full `skills/list` response.
+1. The current bounded catalog
+2. The bounded catalog with model-triggered overflow search
+3. The bounded catalog with automatic overflow retrieval
 
-No new index or autocomplete API is needed for this proposal.
+For each condition, measure correct skill selection, recall at several candidate limits, inappropriate activation, added input tokens, removed catalog tokens, and end-to-end latency. The test should also track whether the model failed to search when it should have and whether skill changes became visible promptly.
 
-## Scope and precedence
+An experiment succeeds only if omitted-skill recall improves without a meaningful regression for already visible skills or negative prompts. Exact explicit mentions must remain unchanged. Search output must stay smaller than the metadata it replaces, and the current behavior must remain available as a fallback.
 
-The current renderer prioritizes system, admin, repository, and user scopes in that order when metadata cannot fit. Overflow search must preserve scope and source identity but should not blindly reproduce prompt ordering as relevance ranking.
+Numeric thresholds should be chosen after a baseline exists. Picking a latency target or percentage improvement now would give a false sense of precision.
 
-A reasonable policy is:
+## Suggested rollout
 
-- Exact explicit mention always wins.
-- Exact qualified-name match wins within search.
-- Repository-scoped candidates receive a small relevance boost for tasks in that repository.
-- Disabled entries and entries with implicit invocation disabled are never returned for implicit search.
-- Duplicate display names retain distinct qualified identities.
-- Active plugin roots come from the existing effective configuration, not disk-cache enumeration.
+Start by exposing diagnostics for active skill count, metadata cost, truncation, omission, and scope distribution. That establishes whether the problem is common enough to justify product work.
 
-## Security and privacy
+Next, add catalog search over `HostSkillsSnapshot` behind a feature flag and run the three-way evaluation. If one strategy improves routing, offer it as an opt-in recovery path only when omission occurs.
 
-The experiment should use metadata already loaded by Codex. It must not execute scripts, load references, install dependencies, or read arbitrary paths during search.
+It should become a default only if the data shows better recall without unacceptable latency or false activation. Keeping the current implementation is a valid outcome if omission is rare or harmless in practice.
 
-Search results should return opaque handles where possible. Skill contents should still be read through the owning provider and current approval and trust boundaries. Disabled skills and inactive plugin versions must remain unavailable.
+## Alternatives worth comparing
 
-The local query and catalog need not leave the machine except for the small candidate metadata eventually included in model context, which is consistent with current skill rendering.
+Increasing the 2% budget would postpone omission, but it would consume more context and would not scale indefinitely. It is still useful as an experimental control.
 
-## Evaluation plan
+Shorter skill descriptions help while the skill remains visible. They cannot help after an entry has been omitted.
 
-The main question is routing recall, not maximum token reduction.
+Users can disable skills or scope them to repositories today. That may be the right operational advice for many installations, although it gives users the job of maintaining the catalog.
 
-Build a test corpus containing:
+Exposing the complete host catalog through model-facing `skills.list` and `skills.read` tools would reuse the orchestrator tool shape, but listing everything on demand could recreate the same context cost. Bounded catalog search is a better fit for this problem.
 
-- Natural-language prompts with one intended skill
-- Prompts with several plausible skills
-- Prompts where no skill should activate
-- Intended skills retained in the visible catalog
-- Intended skills omitted by the budget
-- Duplicate names across sources
-- Repository and user scope conflicts
-- Skills with implicit invocation disabled
-- Newly installed, edited, disabled, and removed skills
-- Active plugins with stale cache versions still present on disk
+## Questions for the Codex team
 
-Compare three conditions:
-
-1. Current bounded catalog
-2. Bounded catalog plus model-triggered overflow search
-3. Bounded catalog plus automatic overflow retrieval
-
-Report:
-
-- Correct skill selection rate
-- Recall at candidate limits 3, 5, and 8
-- Inappropriate skill activation rate
-- Search invocation rate and missed-search rate
-- Added input tokens
-- Tokens removed from the initial catalog
-- End-to-end latency
-- Cache invalidation and freshness failures
-
-Acceptance criteria for an experiment:
-
-- Exact explicit mentions remain unchanged.
-- No disabled or non-implicit skill appears in implicit results.
-- Omitted-skill routing recall improves materially over the current baseline.
-- Routing for skills already visible does not regress materially.
-- Negative-prompt false activation does not increase materially.
-- Search output is bounded and lower than the metadata it replaces.
-- Current behavior remains available as a fallback.
-
-Numeric quality thresholds should be set after establishing a baseline rather than chosen without evidence.
-
-## Rollout
-
-### Phase 1: diagnostics
-
-Expose renderer diagnostics in developer settings or logs: active count, metadata cost, truncation count, omission count, and scope distribution. This establishes whether the problem is common enough to prioritize.
-
-### Phase 2: internal evaluation
-
-Implement catalog search over `HostSkillsSnapshot` behind a feature flag. Run the three-way routing evaluation without changing user defaults.
-
-### Phase 3: opt-in overflow recovery
-
-Enable the better-performing strategy only when omission occurs. Keep the current catalog and fallback path.
-
-### Phase 4: default only if justified
-
-Make overflow recovery the default only if it improves omitted-skill recall without meaningful regressions in normal routing, latency, or false activation.
-
-## Alternatives
-
-### Keep the current implementation
-
-This remains a reasonable outcome if omission is rare or does not cause meaningful failures. Instrumentation should come before architectural work.
-
-### Increase the 2% budget
-
-This delays omission but consumes more context and does not scale indefinitely. It is a useful experimental control, not a complete solution.
-
-### Shorten or improve skill descriptions
-
-Better descriptions help before omission and should remain recommended authoring practice. They cannot help a skill whose metadata is absent from the model-visible list.
-
-### Require users to disable or scope skills
-
-This is available today and may be the right operational advice. It shifts catalog management to users and does not preserve universal implicit availability.
-
-### Expose full host `skills.list` and `skills.read` tools
-
-This would reuse the existing orchestrator tool shape, but listing the entire host catalog on demand can recreate the same context cost. A bounded catalog-search operation is better suited to implicit discovery. Host list and read support may still be useful for other workflows.
-
-### Build a persistent semantic index
-
-The current host snapshot already contains the metadata needed for a first experiment. A persistent semantic index adds storage, invalidation, privacy, and dependency questions before lexical retrieval has been shown inadequate.
-
-## Requested review
-
-I would appreciate the Codex team's guidance on these questions:
-
-1. How often do current renderer metrics show description truncation or skill omission in real installations?
-2. Does the team have evidence that omitted or heavily shortened metadata causes implicit routing failures?
+1. How often do renderer metrics show description truncation or skill omission in real installations?
+2. Is there evidence that omitted or heavily shortened metadata causes implicit routing failures?
 3. Is catalog-level host skill search already planned within the skills extension?
-4. Would an overflow-only experiment fit the current `SkillsService`, `HostSkillsSnapshot`, and extension architecture?
-5. Should overflow recovery be model-triggered, automatic, or evaluated both ways?
-6. Can renderer diagnostics be exposed to users so reports include active-catalog facts rather than raw filesystem counts?
+4. Would an overflow-only experiment fit the existing `SkillsService`, `HostSkillsSnapshot`, and extension architecture?
+5. Should model-triggered and automatic recovery both be evaluated?
+6. Could renderer diagnostics be exposed so user reports contain active-catalog facts rather than raw filesystem counts?
 
 ## Sources
 
@@ -316,7 +174,7 @@ Open-source implementation reviewed at commit [`9e552e9d15ba52bed7077d5357f3e18e
 
 ## About the author
 
-Binil Thomas Scaria is a Chartered Accountant and self-described "vibe-coder" from Kerala, India. He has used ChatGPT since the day it launched and currently uses Codex to build the core product for his SaaS startup idea.
+I am Binil Thomas Scaria, a Chartered Accountant and self-described "vibe-coder" from Kerala, India. I have used ChatGPT since the day it launched, and I now use Codex to build the core product for my SaaS startup idea.
 
 Email: [binilts33@gmail.com](mailto:binilts33@gmail.com)  
 Phone: [+91 96454 38545](tel:+919645438545)
