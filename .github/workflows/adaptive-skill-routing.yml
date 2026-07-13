@@ -32,6 +32,8 @@ jobs:
 
       - name: Apply patch series
         run: |
+          git -C codex config user.name "adaptive-skill-routing-ci"
+          git -C codex config user.email "adaptive-skill-routing-ci@users.noreply.github.com"
           for patch in codex-adaptive-skill-routing/patches/*.patch; do
             git -C codex am "../$patch"
           done
