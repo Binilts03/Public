@@ -1,0 +1,342 @@
+From 69578c1b2011c75e79c5a03ffd6d7112bf82d964 Mon Sep 17 00:00:00 2001
+From: Binilts03 <81070341+Binilts03@users.noreply.github.com>
+Date: Mon, 13 Jul 2026 21:14:35 +0530
+Subject: [PATCH 1/3] skills: share authority-neutral catalog rendering
+
+---
+ codex-rs/core-skills/src/lib.rs    |   2 +
+ codex-rs/core-skills/src/render.rs | 100 +++++++++++++++++++++++++++--
+ codex-rs/ext/skills/src/render.rs  |  96 ++++++++++++++-------------
+ 3 files changed, 145 insertions(+), 53 deletions(-)
+
+diff --git a/codex-rs/core-skills/src/lib.rs b/codex-rs/core-skills/src/lib.rs
+index dcfc656..53bb86d 100644
+--- a/codex-rs/core-skills/src/lib.rs
++++ b/codex-rs/core-skills/src/lib.rs
+@@ -25,8 +25,10 @@ pub use render::SKILLS_HOW_TO_USE_WITH_ABSOLUTE_PATHS;
+ pub use render::SKILLS_HOW_TO_USE_WITH_ALIASES;
+ pub use render::SKILLS_INTRO_WITH_ABSOLUTE_PATHS;
+ pub use render::SkillMetadataBudget;
++pub use render::SkillRenderEntry;
+ pub use render::SkillRenderReport;
+ pub use render::build_available_skills;
++pub use render::build_available_skills_from_entries;
+ pub use render::default_skill_metadata_budget;
+ pub use render::render_available_skills_body;
+ pub use root_loader::PluginSkillSnapshots;
+diff --git a/codex-rs/core-skills/src/render.rs b/codex-rs/core-skills/src/render.rs
+index 3f26e8c..4fa5fb0 100644
+--- a/codex-rs/core-skills/src/render.rs
++++ b/codex-rs/core-skills/src/render.rs
+@@ -29,6 +29,7 @@ pub const SKILLS_INTRO_WITH_ABSOLUTE_PATHS: &str = "A skill is a set of instruct
+ const SKILLS_INTRO_WITH_ALIASES: &str = "A skill is a set of local instructions to follow that is stored in a `SKILL.md` file. Below is the list of skills that can be used. Each entry includes a name, description, and a short path that can be expanded into an absolute path using the skill roots table.";
+ pub const SKILLS_HOW_TO_USE_WITH_ABSOLUTE_PATHS: &str = r###"- Discovery: The list above is the skills available in this session (name + description + source locator). `file` entries live on the host filesystem, `environment resource` entries are owned by their execution environment, `orchestrator resource` entries must be accessed through `skills.list` and `skills.read`, and `custom resource` entries use their provider's access mechanism.
+ - Trigger rules: If the user names a skill (with `$SkillName` or plain text) OR the task clearly matches a skill's description shown above, you must use that skill for that turn. Multiple mentions mean use them all. Do not carry skills across turns unless re-mentioned.
++- Recovery: If `skills.search` is available and the listed skills do not cover the task, search the enabled turn catalogue before proceeding without a skill.
+ - Missing/blocked: If a named skill isn't in the list or its source can't be read, say so briefly and continue with the best fallback.
+ - How to use a skill (progressive disclosure):
+   1) After deciding to use a skill, the main agent must read its `SKILL.md` completely before taking task actions. For a `file` entry, open the listed path. For an `environment resource`, use the filesystem of the owning environment. For an `orchestrator resource`, call `skills.list` with `{"authority":{"kind":"orchestrator"}}`, select the matching package, and pass its `main_resource` to `skills.read`. If a read is truncated or paginated, continue until EOF.
+@@ -46,6 +47,7 @@ pub const SKILLS_HOW_TO_USE_WITH_ABSOLUTE_PATHS: &str = r###"- Discovery: The li
+ - Safety and fallback: If a skill can't be applied cleanly (missing files, unclear instructions), state the issue, pick the next-best approach, and continue."###;
+ pub const SKILLS_HOW_TO_USE_WITH_ALIASES: &str = r###"- Discovery: The list above is the skills available in this session (name + description + short path). Skill bodies live on disk at the listed paths after expanding the matching alias from `### Skill roots`.
+ - Trigger rules: If the user names a skill (with `$SkillName` or plain text) OR the task clearly matches a skill's description shown above, you must use that skill for that turn. Multiple mentions mean use them all. Do not carry skills across turns unless re-mentioned.
++- Recovery: If `skills.search` is available and the listed skills do not cover the task, search the enabled turn catalogue before proceeding without a skill.
+ - Missing/blocked: If a named skill isn't in the list or the path can't be read, say so briefly and continue with the best fallback.
+ - How to use a skill (progressive disclosure):
+   1) After deciding to use a skill, the main agent must expand the listed short `path` with the matching alias from `### Skill roots`, then open and read its `SKILL.md` completely before taking task actions. If a read is truncated or paginated, continue until EOF.
+@@ -135,6 +137,30 @@ pub struct AvailableSkills {
+     pub warning_message: Option<String>,
+ }
+ 
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub struct SkillRenderEntry {
++    pub name: String,
++    pub description: String,
++    pub locator_kind: String,
++    pub locator: String,
++}
++
++impl SkillRenderEntry {
++    pub fn new(
++        name: impl Into<String>,
++        description: impl Into<String>,
++        locator_kind: impl Into<String>,
++        locator: impl Into<String>,
++    ) -> Self {
++        Self {
++            name: name.into(),
++            description: description.into(),
++            locator_kind: locator_kind.into(),
++            locator: locator.into(),
++        }
++    }
++}
++
+ pub fn default_skill_metadata_budget(context_window: Option<i64>) -> SkillMetadataBudget {
+     context_window
+         .and_then(|window| usize::try_from(window).ok())
+@@ -194,6 +220,14 @@ pub fn build_available_skills(
+     Some(selected)
+ }
+ 
++pub fn build_available_skills_from_entries(
++    entries: &[SkillRenderEntry],
++    budget: SkillMetadataBudget,
++) -> Option<AvailableSkills> {
++    let lines = entries.iter().map(SkillLine::from_entry).collect();
++    build_available_skills_from_lines(lines, entries.len(), budget, SkillPathAliases::default())
++}
++
+ fn build_available_skills_from_lines(
+     skill_lines: Vec<SkillLine<'_>>,
+     total_count: usize,
+@@ -442,6 +476,7 @@ impl SkillRenderReport {
+ struct SkillLine<'a> {
+     name: &'a str,
+     description: Cow<'a, str>,
++    locator_kind: &'a str,
+     path: String,
+ }
+ 
+@@ -484,10 +519,20 @@ impl<'a> SkillLine<'a> {
+         Self {
+             name: skill.name.as_str(),
+             description,
++            locator_kind: "file",
+             path,
+         }
+     }
+ 
++    fn from_entry(entry: &'a SkillRenderEntry) -> Self {
++        Self {
++            name: entry.name.as_str(),
++            description: truncate_default_context_skill_description(&entry.description),
++            locator_kind: entry.locator_kind.as_str(),
++            path: entry.locator.clone(),
++        }
++    }
++
+     fn full_cost(&self, budget: SkillMetadataBudget) -> usize {
+         line_cost(budget, &self.render_full())
+     }
+@@ -517,19 +562,25 @@ impl<'a> SkillLine<'a> {
+ 
+     fn render_with_description_chars(&self, description_chars: usize) -> String {
+         if description_chars == 0 {
+-            format!("- {}: (file: {})", self.name, self.path)
++            format!("- {}: ({}: {})", self.name, self.locator_kind, self.path)
+         } else {
+             let end = self.rendered_description_prefix_len(description_chars);
+             let description = &self.description.as_ref()[..end];
+-            format!("- {}: {} (file: {})", self.name, description, self.path)
++            format!(
++                "- {}: {} ({}: {})",
++                self.name, description, self.locator_kind, self.path
++            )
+         }
+     }
+ 
+     fn render_with_description(&self, description: &str) -> String {
+         if description.is_empty() {
+-            format!("- {}: (file: {})", self.name, self.path)
++            format!("- {}: ({}: {})", self.name, self.locator_kind, self.path)
+         } else {
+-            format!("- {}: {} (file: {})", self.name, description, self.path)
++            format!(
++                "- {}: {} ({}: {})",
++                self.name, description, self.locator_kind, self.path
++            )
+         }
+     }
+ }
+@@ -1046,6 +1097,47 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    fn shared_renderer_preserves_authority_specific_locators() {
++        let entries = vec![
++            SkillRenderEntry::new("host", "Host skill", "file", "/skills/host/SKILL.md"),
++            SkillRenderEntry::new(
++                "executor",
++                "Executor skill",
++                "environment resource",
++                "skill://executor/SKILL.md",
++            ),
++            SkillRenderEntry::new(
++                "orchestrator",
++                "Orchestrator skill",
++                "orchestrator resource",
++                "skill://orchestrator/SKILL.md",
++            ),
++            SkillRenderEntry::new(
++                "custom",
++                "Custom skill",
++                "custom resource",
++                "skill://custom/SKILL.md",
++            ),
++        ];
++
++        let available =
++            build_available_skills_from_entries(&entries, SkillMetadataBudget::Characters(8_000))
++                .expect("entries should render");
++
++        assert_eq!(
++            available.skill_lines,
++            vec![
++                "- host: Host skill (file: /skills/host/SKILL.md)",
++                "- executor: Executor skill (environment resource: skill://executor/SKILL.md)",
++                "- orchestrator: Orchestrator skill (orchestrator resource: skill://orchestrator/SKILL.md)",
++                "- custom: Custom skill (custom resource: skill://custom/SKILL.md)",
++            ]
++        );
++        assert_eq!(available.report.included_count, 4);
++        assert_eq!(available.report.omitted_count, 0);
++    }
++
+     #[test]
+     fn default_context_caps_descriptions_without_mutating_metadata() {
+         let description = "\u{1F4A1}".repeat(MAX_DEFAULT_CONTEXT_SKILL_DESCRIPTION_CHARS + 1);
+diff --git a/codex-rs/ext/skills/src/render.rs b/codex-rs/ext/skills/src/render.rs
+index 8e9fea4..ef4b4d0 100644
+--- a/codex-rs/ext/skills/src/render.rs
++++ b/codex-rs/ext/skills/src/render.rs
+@@ -1,5 +1,8 @@
+ use std::borrow::Cow;
+ 
++use codex_core_skills::SkillMetadataBudget;
++use codex_core_skills::SkillRenderEntry;
++use codex_core_skills::build_available_skills_from_entries;
+ use codex_utils_string::take_bytes_at_char_boundary;
+ 
+ use crate::catalog::SkillCatalog;
+@@ -7,8 +10,7 @@ use crate::catalog::SkillCatalogEntry;
+ use crate::catalog::SkillSourceKind;
+ use crate::fragments::AvailableSkillsInstructions;
+ 
+-const MAX_AVAILABLE_SKILLS_BYTES: usize = 8_000;
+-const MAX_MAIN_PROMPT_BYTES: usize = 8_000;
++const MAX_AVAILABLE_SKILLS_CHARS: usize = 8_000;
+ const MAX_CATALOG_SKILL_DESCRIPTION_CHARS: usize = 1_024;
+ const TRUNCATED_SKILL_DESCRIPTION_SUFFIX: &str = "...";
+ pub(crate) const MAX_SKILL_NAME_BYTES: usize = 256;
+@@ -23,46 +25,53 @@ pub(crate) fn available_skills_fragment(
+     catalog: &SkillCatalog,
+     include_skills_usage_instructions: bool,
+ ) -> Option<AvailableSkillsInstructions> {
+-    let mut total_bytes = 0usize;
+-    let mut omitted = 0usize;
+-    let mut skill_lines = Vec::new();
+-
+-    for entry in catalog
+-        .entries
+-        .iter()
+-        .filter(|entry| entry.enabled && entry.prompt_visible)
+-    {
+-        let description = entry
+-            .short_description
+-            .as_deref()
+-            .unwrap_or(entry.description.as_str());
+-        let description = truncate_catalog_skill_description(description);
+-        let line = render_skill_line(entry, description.as_ref());
+-        let next_bytes = total_bytes.saturating_add(line.len());
+-        if next_bytes > MAX_AVAILABLE_SKILLS_BYTES {
+-            omitted = omitted.saturating_add(1);
+-            continue;
+-        }
+-        total_bytes = next_bytes;
+-        skill_lines.push(line);
+-    }
+-
+-    if skill_lines.is_empty() {
+-        return None;
+-    }
+-    if omitted > 0 {
+-        let skill_word = if omitted == 1 { "skill" } else { "skills" };
+-        skill_lines.push(format!(
+-            "- {omitted} additional {skill_word} omitted from this bounded skills list."
+-        ));
+-    }
++    let available = render_catalog(catalog)?;
+ 
+     Some(AvailableSkillsInstructions::from_skill_lines(
+-        skill_lines,
++        available.skill_lines,
+         include_skills_usage_instructions,
+     ))
+ }
+ 
++pub(crate) fn catalog_requires_adaptive_routing(catalog: &SkillCatalog) -> bool {
++    render_catalog(catalog).is_some_and(|available| {
++        available.report.omitted_count > 0 || available.report.truncated_description_chars > 0
++    })
++}
++
++pub(crate) fn recovery_skills_fragment(
++    include_skills_usage_instructions: bool,
++) -> AvailableSkillsInstructions {
++    AvailableSkillsInstructions::from_skill_lines(
++        vec!["- No strong initial match. Use `skills.search` to search the enabled skill catalogue for this task.".to_string()],
++        include_skills_usage_instructions,
++    )
++}
++
++fn render_catalog(catalog: &SkillCatalog) -> Option<codex_core_skills::AvailableSkills> {
++    let entries = catalog
++        .entries
++        .iter()
++        .filter(|entry| entry.enabled && entry.prompt_visible)
++        .map(|entry| {
++            let description = entry
++                .short_description
++                .as_deref()
++                .unwrap_or(entry.description.as_str());
++            SkillRenderEntry::new(
++                &entry.name,
++                description,
++                locator_kind(entry),
++                entry.rendered_path(),
++            )
++        })
++        .collect::<Vec<_>>();
++    build_available_skills_from_entries(
++        &entries,
++        SkillMetadataBudget::Characters(MAX_AVAILABLE_SKILLS_CHARS),
++    )
++}
++
+ pub(crate) fn truncate_catalog_skill_description(description: &str) -> Cow<'_, str> {
+     if description
+         .char_indices()
+@@ -83,26 +92,15 @@ pub(crate) fn truncate_catalog_skill_description(description: &str) -> Cow<'_, s
+     Cow::Owned(truncated)
+ }
+ 
+-fn render_skill_line(entry: &SkillCatalogEntry, description: &str) -> String {
+-    let locator_kind = match &entry.authority.kind {
++fn locator_kind(entry: &SkillCatalogEntry) -> &'static str {
++    match &entry.authority.kind {
+         SkillSourceKind::Host => "file",
+         SkillSourceKind::Executor => "environment resource",
+         SkillSourceKind::Orchestrator => "orchestrator resource",
+         SkillSourceKind::Custom(_) => "custom resource",
+-    };
+-    let name = entry.name.as_str();
+-    let path = entry.rendered_path();
+-    if description.is_empty() {
+-        format!("- {name}: ({locator_kind}: {path})")
+-    } else {
+-        format!("- {name}: {description} ({locator_kind}: {path})")
+     }
+ }
+ 
+-pub(crate) fn truncate_main_prompt_contents(contents: &str) -> (String, bool) {
+-    truncate_utf8_to_bytes(contents, MAX_MAIN_PROMPT_BYTES)
+-}
+-
+ pub(crate) fn truncate_utf8_to_bytes(contents: &str, max_bytes: usize) -> (String, bool) {
+     let truncated = take_bytes_at_char_boundary(contents, max_bytes);
+     (truncated.to_string(), truncated.len() < contents.len())
+-- 
+2.47.1.windows.2
+

@@ -1,0 +1,1343 @@
+From ec5d75f2022993ff90c7bc5ef860bf69c6967300 Mon Sep 17 00:00:00 2001
+From: Binilts03 <81070341+Binilts03@users.noreply.github.com>
+Date: Mon, 13 Jul 2026 21:14:55 +0530
+Subject: [PATCH 2/3] skills: activate loss-aware adaptive routing
+
+---
+ codex-rs/app-server/src/extensions.rs         |   3 +
+ codex-rs/core-skills/src/injection.rs         |   8 +
+ codex-rs/core/src/session/mod.rs              |   8 +-
+ codex-rs/ext/skills/src/catalog.rs            |  15 ++
+ codex-rs/ext/skills/src/config.rs             |   2 +
+ .../ext/skills/src/dynamic_skill_selector.rs  |   1 +
+ .../weighted_lexical.rs                       |  36 ++-
+ .../weighted_lexical_tests.rs                 |  39 ++-
+ codex-rs/ext/skills/src/extension.rs          | 242 ++++++++++++++----
+ codex-rs/ext/skills/src/provider/host.rs      |   3 +-
+ codex-rs/ext/skills/src/selection.rs          |  60 +++--
+ codex-rs/ext/skills/src/selection_tests.rs    |  40 +++
+ .../skills/src/shadow_selection_experiment.rs |  83 +++++-
+ codex-rs/ext/skills/src/state.rs              | 107 ++++++++
+ .../ext/skills/tests/implicit_invocation.rs   |   2 +
+ codex-rs/ext/skills/tests/skills_extension.rs | 136 +++++++++-
+ codex-rs/features/src/lib.rs                  |   8 +
+ 17 files changed, 697 insertions(+), 96 deletions(-)
+ create mode 100644 codex-rs/ext/skills/src/selection_tests.rs
+
+diff --git a/codex-rs/app-server/src/extensions.rs b/codex-rs/app-server/src/extensions.rs
+index 31af1d6..11c6890 100644
+--- a/codex-rs/app-server/src/extensions.rs
++++ b/codex-rs/app-server/src/extensions.rs
+@@ -95,6 +95,9 @@ where
+             shadow_selection_enabled: config
+                 .features
+                 .enabled(codex_features::Feature::SkillSearch),
++            adaptive_routing_enabled: config
++                .features
++                .enabled(codex_features::Feature::AdaptiveSkillRouting),
+         },
+     );
+     Arc::new(builder.build())
+diff --git a/codex-rs/core-skills/src/injection.rs b/codex-rs/core-skills/src/injection.rs
+index 201e795..2688fbf 100644
+--- a/codex-rs/core-skills/src/injection.rs
++++ b/codex-rs/core-skills/src/injection.rs
+@@ -29,6 +29,14 @@ pub struct SkillInjection {
+     pub contents: String,
+ }
+ 
++/// Marker inserted by the skills extension when it owns model-visible skill routing.
++#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
++pub struct AdaptiveSkillRoutingEnabled;
++
++/// Marker inserted after the extension contributes the one authoritative turn catalogue.
++#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
++pub struct InjectedAdaptiveSkillCatalog;
++
+ /// Host skill prompts that have already been injected by an extension for this
+ /// turn.
+ ///
+diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
+index e61d59b..3cfeb76 100644
+--- a/codex-rs/core/src/session/mod.rs
++++ b/codex-rs/core/src/session/mod.rs
+@@ -3288,7 +3288,13 @@ impl Session {
+                     .push(PersonalitySpecInstructions::new(personality_message).render());
+             }
+         }
+-        if turn_context.config.include_skill_instructions {
++        if turn_context.config.include_skill_instructions
++            && self
++                .services
++                .thread_extension_data
++                .get::<codex_core_skills::injection::AdaptiveSkillRoutingEnabled>()
++                .is_none()
++        {
+             let available_skills = build_available_skills(
+                 turn_context.turn_skills.snapshot.outcome(),
+                 default_skill_metadata_budget(turn_context.model_info.context_window),
+diff --git a/codex-rs/ext/skills/src/catalog.rs b/codex-rs/ext/skills/src/catalog.rs
+index 59977a4..a87cd12 100644
+--- a/codex-rs/ext/skills/src/catalog.rs
++++ b/codex-rs/ext/skills/src/catalog.rs
+@@ -1,4 +1,5 @@
+ use codex_core_skills::model::SkillDependencies;
++use codex_protocol::protocol::SkillScope;
+ use codex_utils_path_uri::PathUri;
+ 
+ /// Source authority that owns a skill package and must be used to read it.
+@@ -115,6 +116,8 @@ pub struct SkillCatalogEntry {
+     pub main_prompt: SkillResourceId,
+     pub display_path: Option<String>,
+     pub dependencies: Option<SkillDependencies>,
++    pub scope: Option<SkillScope>,
++    pub plugin_id: Option<String>,
+     pub enabled: bool,
+     pub prompt_visible: bool,
+ }
+@@ -136,6 +139,8 @@ impl SkillCatalogEntry {
+             main_prompt,
+             display_path: None,
+             dependencies: None,
++            scope: None,
++            plugin_id: None,
+             enabled: true,
+             prompt_visible: true,
+         }
+@@ -156,6 +161,16 @@ impl SkillCatalogEntry {
+         self
+     }
+ 
++    pub fn with_routing_context(
++        mut self,
++        scope: Option<SkillScope>,
++        plugin_id: Option<String>,
++    ) -> Self {
++        self.scope = scope;
++        self.plugin_id = plugin_id;
++        self
++    }
++
+     pub fn disabled(mut self) -> Self {
+         self.enabled = false;
+         self
+diff --git a/codex-rs/ext/skills/src/config.rs b/codex-rs/ext/skills/src/config.rs
+index f019814..c67a4cc 100644
+--- a/codex-rs/ext/skills/src/config.rs
++++ b/codex-rs/ext/skills/src/config.rs
+@@ -9,4 +9,6 @@ pub struct SkillsExtensionConfig {
+     pub orchestrator_skills_enabled: bool,
+     /// Whether cheap skill selectors run in shadow mode without changing prompt contents.
+     pub shadow_selection_enabled: bool,
++    /// Whether a lossy full catalog is replaced by a turn-specific candidate catalog.
++    pub adaptive_routing_enabled: bool,
+ }
+diff --git a/codex-rs/ext/skills/src/dynamic_skill_selector.rs b/codex-rs/ext/skills/src/dynamic_skill_selector.rs
+index 948c815..b083dff 100644
+--- a/codex-rs/ext/skills/src/dynamic_skill_selector.rs
++++ b/codex-rs/ext/skills/src/dynamic_skill_selector.rs
+@@ -1,4 +1,5 @@
+ mod weighted_lexical;
++pub(crate) use weighted_lexical::MAX_CANDIDATES as MAX_SEARCHABLE_SKILLS;
+ pub(crate) use weighted_lexical::WeightedLexicalSkillSelector;
+ 
+ /// Metadata searched by a cheap skill selector.
+diff --git a/codex-rs/ext/skills/src/dynamic_skill_selector/weighted_lexical.rs b/codex-rs/ext/skills/src/dynamic_skill_selector/weighted_lexical.rs
+index 4ee7901..b871681 100644
+--- a/codex-rs/ext/skills/src/dynamic_skill_selector/weighted_lexical.rs
++++ b/codex-rs/ext/skills/src/dynamic_skill_selector/weighted_lexical.rs
+@@ -8,7 +8,7 @@ const MAX_QUERY_BYTES: usize = 4 * 1024;
+ const MAX_QUERY_TERMS: usize = 64;
+ const MAX_DOCUMENT_BYTES: usize = 4 * 1024;
+ const MAX_DOCUMENT_TERMS: usize = 256;
+-const MAX_CANDIDATES: usize = 1_000;
++pub(super) const MAX_CANDIDATES: usize = 10_000;
+ const MAX_RESULTS: usize = 50;
+ 
+ const STOP_WORDS: &[&str] = &[
+@@ -34,9 +34,10 @@ impl CheapSkillSelector for WeightedLexicalSkillSelector {
+         let (query, query_bytes_truncated) = bounded(query, MAX_QUERY_BYTES);
+         let query_phrase = normalize_phrase(query);
+         let (query_terms, query_terms_truncated) = query_terms(&query_phrase);
++        let query_ngrams = character_ngrams(&query_phrase);
+         let query_truncated = query_bytes_truncated || query_terms_truncated;
+         let candidate_set_truncated = documents.len() > MAX_CANDIDATES;
+-        if query_terms.is_empty() || limit == 0 {
++        if query_terms.is_empty() || limit == 0 || candidate_set_truncated {
+             return CheapSkillSelection {
+                 query_term_count: query_terms.len(),
+                 query_truncated,
+@@ -47,9 +48,8 @@ impl CheapSkillSelector for WeightedLexicalSkillSelector {
+ 
+         let mut scored = documents
+             .iter()
+-            .take(MAX_CANDIDATES)
+             .filter_map(|document| {
+-                let score = score_document(&query_phrase, &query_terms, document);
++                let score = score_document(&query_phrase, &query_terms, &query_ngrams, document);
+                 (score > 0).then_some((score, document.id, document.name))
+             })
+             .collect::<Vec<_>>();
+@@ -77,6 +77,7 @@ impl CheapSkillSelector for WeightedLexicalSkillSelector {
+ fn score_document(
+     query_phrase: &str,
+     query_terms: &[&str],
++    query_ngrams: &HashSet<String>,
+     document: &SkillSelectionDocument<'_>,
+ ) -> u32 {
+     let name = normalize_bounded(document.name);
+@@ -129,7 +130,32 @@ fn score_document(
+         }
+     }
+ 
+-    score.saturating_add(matched_query_terms.saturating_mul(matched_query_terms))
++    let ngram_score = ngram_overlap(query_ngrams, &name)
++        .saturating_mul(8)
++        .saturating_add(ngram_overlap(query_ngrams, &short_description).saturating_mul(3))
++        .saturating_add(ngram_overlap(query_ngrams, &description))
++        .min(64);
++    score
++        .saturating_add(matched_query_terms.saturating_mul(matched_query_terms))
++        .saturating_add(ngram_score)
++}
++
++fn character_ngrams(value: &str) -> HashSet<String> {
++    let characters = value
++        .chars()
++        .filter(|character| !character.is_whitespace())
++        .take(256)
++        .collect::<Vec<_>>();
++    characters
++        .windows(3)
++        .take(256)
++        .map(|window| window.iter().collect())
++        .collect()
++}
++
++fn ngram_overlap(query: &HashSet<String>, value: &str) -> u32 {
++    let value = character_ngrams(value);
++    u32::try_from(query.intersection(&value).count()).unwrap_or(u32::MAX)
+ }
+ 
+ fn normalize_bounded(value: &str) -> String {
+diff --git a/codex-rs/ext/skills/src/dynamic_skill_selector/weighted_lexical_tests.rs b/codex-rs/ext/skills/src/dynamic_skill_selector/weighted_lexical_tests.rs
+index 696c160..392fb46 100644
+--- a/codex-rs/ext/skills/src/dynamic_skill_selector/weighted_lexical_tests.rs
++++ b/codex-rs/ext/skills/src/dynamic_skill_selector/weighted_lexical_tests.rs
+@@ -104,13 +104,7 @@ fn lexical_selector_reports_bounded_inputs() {
+ 
+     assert!(selection.query_truncated);
+     assert!(selection.candidate_set_truncated);
+-    assert_eq!(20, selection.candidate_ids.len());
+-    assert!(
+-        selection
+-            .candidate_ids
+-            .iter()
+-            .all(|id| *id < MAX_CANDIDATES)
+-    );
++    assert!(selection.candidate_ids.is_empty());
+ }
+ 
+ #[test]
+@@ -164,3 +158,34 @@ fn selector_can_be_used_behind_the_shared_trait() {
+ 
+     assert_eq!(vec![7], run(&WeightedLexicalSkillSelector).candidate_ids);
+ }
++
++#[test]
++fn lexical_selector_recovers_typo_and_unsegmented_cjk_matches() {
++    let documents = [
++        SkillSelectionDocument {
++            id: 1,
++            name: "security-review",
++            short_description: None,
++            description: "Review code for security defects.",
++        },
++        SkillSelectionDocument {
++            id: 2,
++            name: "pdf",
++            short_description: None,
++            description: "创建和编辑PDF文档",
++        },
++    ];
++
++    assert_eq!(
++        vec![1],
++        WeightedLexicalSkillSelector
++            .select("securty review", &documents, 1)
++            .candidate_ids
++    );
++    assert_eq!(
++        vec![2],
++        WeightedLexicalSkillSelector
++            .select("请创建PDF文档", &documents, 1)
++            .candidate_ids
++    );
++}
+diff --git a/codex-rs/ext/skills/src/extension.rs b/codex-rs/ext/skills/src/extension.rs
+index 8e877ac..30ff1f5 100644
+--- a/codex-rs/ext/skills/src/extension.rs
++++ b/codex-rs/ext/skills/src/extension.rs
+@@ -1,6 +1,8 @@
+ use std::sync::Arc;
+ 
+ use codex_core_skills::HostSkillsSnapshot;
++use codex_core_skills::injection::AdaptiveSkillRoutingEnabled;
++use codex_core_skills::injection::InjectedAdaptiveSkillCatalog;
+ use codex_core_skills::injection::InjectedHostSkillPrompts;
+ use codex_exec_server::LOCAL_ENVIRONMENT_ID;
+ use codex_extension_api::ConfigContributor;
+@@ -29,12 +31,14 @@ use codex_protocol::openai_models::ModelInfo;
+ use codex_protocol::protocol::Event;
+ use codex_protocol::protocol::EventMsg;
+ use codex_protocol::protocol::WarningEvent;
++use codex_protocol::user_input::UserInput;
+ 
+ use crate::SkillsExtensionConfig;
+ use crate::catalog::SkillCatalog;
+ use crate::catalog::SkillCatalogEntry;
+ use crate::catalog::SkillReadResult;
+ use crate::catalog::SkillSourceKind;
++use crate::dynamic_skill_selector::MAX_SEARCHABLE_SKILLS;
+ use crate::fragments::SkillInstructions;
+ use crate::provider::HostSkillProvider;
+ use crate::provider::SkillListQuery;
+@@ -43,7 +47,8 @@ use crate::provider::SkillReadRequest;
+ use crate::render::MAX_SKILL_NAME_BYTES;
+ use crate::render::MAX_SKILL_PATH_BYTES;
+ use crate::render::available_skills_fragment;
+-use crate::render::truncate_main_prompt_contents;
++use crate::render::catalog_requires_adaptive_routing;
++use crate::render::recovery_skills_fragment;
+ use crate::render::truncate_utf8_to_bytes;
+ use crate::selection::collect_explicit_skill_mentions;
+ use crate::shadow_selection_experiment::ShadowSelectionExperiment;
+@@ -54,6 +59,9 @@ use crate::state::SkillsTurnState;
+ use crate::tools::skill_tools;
+ use crate::world_state::executor_skills_world_state_section;
+ 
++const MAX_INITIAL_SKILL_CANDIDATES: usize = 12;
++const MAX_SKILL_INSTRUCTIONS_BYTES: usize = 1024 * 1024;
++
+ struct SkillsExtension<C> {
+     providers: SkillProviders,
+     event_sink: Arc<dyn ExtensionEventSink>,
+@@ -67,12 +75,18 @@ where
+ {
+     fn on_thread_start<'a>(&'a self, input: ThreadStartInput<'a, C>) -> ExtensionFuture<'a, ()> {
+         Box::pin(async move {
++            let config = (self.config_from_host)(input.config);
++            if config.adaptive_routing_enabled {
++                input.thread_store.insert(AdaptiveSkillRoutingEnabled);
++            } else {
++                let _ = input.thread_store.remove::<AdaptiveSkillRoutingEnabled>();
++            }
+             let orchestrator_skills_available = !input
+                 .environments
+                 .iter()
+                 .any(|environment| environment.environment_id == LOCAL_ENVIRONMENT_ID);
+             input.thread_store.insert(SkillsThreadState::new(
+-                (self.config_from_host)(input.config),
++                config,
+                 orchestrator_skills_available,
+             ));
+         })
+@@ -91,6 +105,11 @@ where
+         new_config: &C,
+     ) {
+         let next_config = (self.config_from_host)(new_config);
++        if next_config.adaptive_routing_enabled {
++            thread_store.insert(AdaptiveSkillRoutingEnabled);
++        } else {
++            let _ = thread_store.remove::<AdaptiveSkillRoutingEnabled>();
++        }
+         if let Some(state) = thread_store.get::<SkillsThreadState>() {
+             state.set_config(next_config);
+         } else {
+@@ -120,6 +139,9 @@ where
+             if !config.include_instructions {
+                 return Vec::new();
+             }
++            if config.adaptive_routing_enabled {
++                return Vec::new();
++            }
+             let catalog = self
+                 .list_skills(
+                     SkillListQuery {
+@@ -173,6 +195,9 @@ where
+             input
+                 .turn_store
+                 .insert(ExecutorSkillsStepState(catalog.clone()));
++            if config.adaptive_routing_enabled {
++                return Vec::new();
++            }
+             let include_usage = input
+                 .thread_store
+                 .get::<ModelInfo>()
+@@ -198,8 +223,10 @@ where
+         let Some(thread_state) = thread_store.get::<SkillsThreadState>() else {
+             return Vec::new();
+         };
+-        if !self.providers.has_orchestrator_provider()
+-            || !thread_state.orchestrator_skills_enabled()
++        let config = thread_state.config();
++        if !config.adaptive_routing_enabled
++            && (!self.providers.has_orchestrator_provider()
++                || !thread_state.orchestrator_skills_enabled())
+         {
+             return Vec::new();
+         }
+@@ -271,87 +298,176 @@ where
+             if let Some(executor_skills) = turn_store.get::<ExecutorSkillsStepState>() {
+                 catalog.extend(executor_skills.0.clone());
+             }
++            if config.adaptive_routing_enabled
++                && host_snapshot.is_some()
++                && let Ok(host_catalog) = HostSkillProvider::new().list(host_query.clone()).await
++            {
++                catalog.extend(host_catalog);
++            }
+             for warning in &catalog.warnings {
+                 self.emit_warning(&input.turn_id, warning.clone());
+             }
+-
+-            let selected_entries = collect_explicit_skill_mentions(&input.user_input, &catalog);
+-            let shadow_selection_turn = if config.shadow_selection_enabled {
+-                // App-server leaves host discovery in core, so its configured providers omit the
+-                // host snapshot. Extend only the experiment catalog to keep rendered context intact.
+-                let mut shadow_catalog = catalog.clone();
+-                if host_snapshot.is_some()
+-                    && let Ok(host_catalog) = HostSkillProvider::new().list(host_query).await
+-                {
+-                    shadow_catalog.extend(host_catalog);
+-                }
+-                Some(
+-                    self.shadow_selection
+-                        .run(&input.user_input, &shadow_catalog),
+-                )
+-            } else {
+-                None
+-            };
++            let explicit_selection = collect_explicit_skill_mentions(&input.user_input, &catalog);
++            if !explicit_selection.unresolved.is_empty() {
++                let warning = format!(
++                    "Explicit skill selection was not applied because these names or paths were missing, disabled, or ambiguous: {}",
++                    explicit_selection.unresolved.join(", ")
++                );
++                self.emit_warning(&input.turn_id, warning.clone());
++                catalog.warnings.push(warning);
++            }
++            let has_explicit_selection =
++                !explicit_selection.entries.is_empty() || !explicit_selection.unresolved.is_empty();
++            let selected_entries = explicit_selection.entries;
++            if config.adaptive_routing_enabled {
++                thread_state.replace_routing_turn(
++                    input.turn_id.clone(),
++                    catalog.clone(),
++                    host_snapshot.clone(),
++                );
++            }
++            let selection_inputs = routing_inputs(
++                &input.user_input,
++                thread_state.previous_routing_query().as_deref(),
++            );
++            if let Some(UserInput::Text { text, .. }) = selection_inputs.first() {
++                thread_state.set_previous_routing_query(text.clone());
++            }
++            let shadow_selection_turn =
++                if config.shadow_selection_enabled || config.adaptive_routing_enabled {
++                    let mut shadow_catalog = catalog.clone();
++                    if !config.adaptive_routing_enabled
++                        && host_snapshot.is_some()
++                        && let Ok(host_catalog) = HostSkillProvider::new().list(host_query).await
++                    {
++                        shadow_catalog.extend(host_catalog);
++                    }
++                    Some(
++                        self.shadow_selection
++                            .run(&selection_inputs, &shadow_catalog),
++                    )
++                } else {
++                    None
++                };
++            let adaptive_catalog = shadow_selection_turn.as_ref().and_then(|selection| {
++                (config.adaptive_routing_enabled
++                    && catalog.entries.len() <= MAX_SEARCHABLE_SKILLS
++                    && catalog_requires_adaptive_routing(&catalog))
++                .then(|| SkillCatalog {
++                    entries: selection
++                        .candidate_ids(MAX_INITIAL_SKILL_CANDIDATES)
++                        .filter_map(|id| catalog.entries.get(id).cloned())
++                        .collect(),
++                    warnings: catalog.warnings.clone(),
++                })
++            });
++            if config.adaptive_routing_enabled && catalog.entries.len() > MAX_SEARCHABLE_SKILLS {
++                let warning = format!(
++                    "Adaptive skill routing supports at most {MAX_SEARCHABLE_SKILLS} entries; using the bounded legacy catalogue for this turn."
++                );
++                self.emit_warning(&input.turn_id, warning.clone());
++                catalog.warnings.push(warning);
++            }
++            tracing::info!(
++                turn_id = %input.turn_id,
++                applicable_skills = catalog.entries.len(),
++                candidate_skills = adaptive_catalog
++                    .as_ref()
++                    .map_or(catalog.entries.len(), |catalog| catalog.entries.len()),
++                routing_mode = if adaptive_catalog.is_some() {
++                    "adaptive"
++                } else {
++                    "complete_or_legacy"
++                },
++                "selected model-visible skill catalogue"
++            );
++            if let Some(candidates) = &adaptive_catalog {
++                thread_state.set_initial_candidates(
++                    &input.turn_id,
++                    candidates
++                        .entries
++                        .iter()
++                        .map(|entry| entry.main_prompt.as_str().to_string()),
++                );
++            }
+             thread_state
+                 .replace_shadow_selection_turn(input.turn_id.clone(), shadow_selection_turn);
+             let mut fragments: Vec<Box<dyn ContextualUserFragment + Send>> = Vec::new();
+-            if config.include_instructions {
+-                let mut turn_catalog = catalog.clone();
+-                turn_catalog.entries.retain(|entry| {
+-                    entry.authority.kind != SkillSourceKind::Executor
+-                        && entry.authority.kind != SkillSourceKind::Orchestrator
+-                });
++            if config.include_instructions && !has_explicit_selection {
++                let adaptive_active = adaptive_catalog.is_some();
++                let mut turn_catalog = adaptive_catalog.unwrap_or_else(|| catalog.clone());
++                if !config.adaptive_routing_enabled {
++                    turn_catalog.entries.retain(|entry| {
++                        entry.authority.kind != SkillSourceKind::Executor
++                            && entry.authority.kind != SkillSourceKind::Orchestrator
++                    });
++                }
+                 let include_usage = thread_store
+                     .get::<ModelInfo>()
+                     .is_some_and(|model_info| model_info.include_skills_usage_instructions);
+                 if let Some(fragment) = available_skills_fragment(&turn_catalog, include_usage) {
+                     fragments.push(Box::new(fragment));
++                    turn_store.insert(InjectedAdaptiveSkillCatalog);
++                } else if adaptive_active {
++                    fragments.push(Box::new(recovery_skills_fragment(include_usage)));
++                    turn_store.insert(InjectedAdaptiveSkillCatalog);
+                 }
+             }
+ 
+             let mut warnings = catalog.warnings.clone();
+             let mut main_prompts_injected = false;
+             let mut injected_host_skill_prompts = InjectedHostSkillPrompts::default();
++            let mut loaded_prompts = Vec::new();
++            let mut loaded_prompt_bytes = 0usize;
++            let mut load_failed = false;
+             for entry in &selected_entries {
+                 match self
+                     .read_main_prompt(entry, host_snapshot.clone(), session_store, &thread_state)
+                     .await
+                 {
+                     Ok(read_result) => {
+-                        let (contents, truncated) =
+-                            truncate_main_prompt_contents(read_result.contents.as_str());
+-                        if truncated {
++                        let next_bytes = loaded_prompt_bytes
++                            .checked_add(read_result.contents.len())
++                            .filter(|bytes| *bytes <= MAX_SKILL_INSTRUCTIONS_BYTES);
++                        if let Some(next_bytes) = next_bytes {
++                            loaded_prompt_bytes = next_bytes;
++                            loaded_prompts.push((entry, read_result.contents));
++                        } else {
+                             let warning = format!(
+-                                "Skill `{}` exceeded the main prompt context limit and was truncated.",
++                                "Explicit skill instructions exceed the cumulative {MAX_SKILL_INSTRUCTIONS_BYTES}-byte limit at `{}`; no explicitly selected skills were loaded.",
+                                 entry.name
+                             );
+                             self.emit_warning(&input.turn_id, warning.clone());
+                             warnings.push(warning);
+-                        }
+-                        let fragment = SkillInstructions {
+-                            name: truncate_utf8_to_bytes(&entry.name, MAX_SKILL_NAME_BYTES).0,
+-                            path: truncate_utf8_to_bytes(
+-                                entry.rendered_path(),
+-                                MAX_SKILL_PATH_BYTES,
+-                            )
+-                            .0,
+-                            contents,
+-                        };
+-                        fragments.push(Box::new(fragment));
+-                        main_prompts_injected = true;
+-                        if entry.authority.kind == SkillSourceKind::Host {
+-                            injected_host_skill_prompts.insert_path(entry.main_prompt.as_str());
++                            load_failed = true;
+                         }
+                     }
+                     Err(message) => {
+-                        let warning = format!("Failed to load skill `{}`: {message}", entry.name);
++                        let warning = format!(
++                            "Failed to load skill `{}`: {message}; no explicitly selected skills were loaded.",
++                            entry.name
++                        );
+                         self.emit_warning(&input.turn_id, warning.clone());
+                         warnings.push(warning);
++                        load_failed = true;
+                     }
+                 }
+             }
++            if !load_failed {
++                for (entry, contents) in loaded_prompts {
++                    fragments.push(Box::new(SkillInstructions {
++                        name: truncate_utf8_to_bytes(&entry.name, MAX_SKILL_NAME_BYTES).0,
++                        path: truncate_utf8_to_bytes(entry.rendered_path(), MAX_SKILL_PATH_BYTES).0,
++                        contents,
++                    }));
++                    if entry.authority.kind == SkillSourceKind::Host {
++                        injected_host_skill_prompts.insert_path(entry.main_prompt.as_str());
++                    }
++                }
++                main_prompts_injected = !selected_entries.is_empty();
++            }
+ 
+-            if let Some(host_snapshot) = &host_snapshot {
++            if !load_failed && let Some(host_snapshot) = &host_snapshot {
+                 for entry in selected_entries
+                     .iter()
+                     .filter(|entry| entry.authority.kind != SkillSourceKind::Host)
+@@ -383,6 +499,36 @@ where
+     }
+ }
+ 
++fn routing_inputs(inputs: &[UserInput], previous: Option<&str>) -> Vec<UserInput> {
++    let current = inputs
++        .iter()
++        .filter_map(|input| match input {
++            UserInput::Text { text, .. } => Some(text.as_str()),
++            UserInput::Skill { name, .. } | UserInput::Mention { name, .. } => Some(name.as_str()),
++            UserInput::LocalImage { path, .. } => path.to_str(),
++            UserInput::Image { .. } => Some("image attachment"),
++        })
++        .collect::<Vec<_>>()
++        .join(" ");
++    let lower = current.to_lowercase();
++    let referential = current.split_whitespace().count() <= 6
++        && ["it", "this", "that", "same", "continue", "again", "here"]
++            .iter()
++            .any(|term| lower.split_whitespace().any(|word| word == *term));
++    let text = if referential {
++        previous
++            .filter(|previous| !previous.is_empty())
++            .map(|previous| format!("{previous} {current}"))
++            .unwrap_or(current)
++    } else {
++        current
++    };
++    vec![UserInput::Text {
++        text: truncate_utf8_to_bytes(&text, 16 * 1024).0,
++        text_elements: Vec::new(),
++    }]
++}
++
+ impl<C> SkillsExtension<C> {
+     #[tracing::instrument(level = "trace", skip_all)]
+     async fn list_skills(
+diff --git a/codex-rs/ext/skills/src/provider/host.rs b/codex-rs/ext/skills/src/provider/host.rs
+index 2cee694..aafb0f2 100644
+--- a/codex-rs/ext/skills/src/provider/host.rs
++++ b/codex-rs/ext/skills/src/provider/host.rs
+@@ -116,7 +116,8 @@ fn catalog_entry_from_skill(skill: &SkillMetadata, enabled: bool) -> SkillCatalo
+     )
+     .with_short_description(skill.short_description.clone())
+     .with_display_path(display_path)
+-    .with_dependencies(skill.dependencies.clone());
++    .with_dependencies(skill.dependencies.clone())
++    .with_routing_context(Some(skill.scope), skill.plugin_id.clone());
+ 
+     if !enabled {
+         entry = entry.disabled();
+diff --git a/codex-rs/ext/skills/src/selection.rs b/codex-rs/ext/skills/src/selection.rs
+index a708b18..1406fcf 100644
+--- a/codex-rs/ext/skills/src/selection.rs
++++ b/codex-rs/ext/skills/src/selection.rs
+@@ -21,8 +21,9 @@ const SKILL_PATH_PREFIX: &str = "skill://";
+ pub(crate) fn collect_explicit_skill_mentions(
+     inputs: &[UserInput],
+     catalog: &SkillCatalog,
+-) -> Vec<SkillCatalogEntry> {
++) -> ExplicitSkillSelection {
+     let mut selected = Vec::new();
++    let mut unresolved = Vec::new();
+     let mut seen = HashSet::new();
+     let mut blocked_plain_names = HashSet::new();
+ 
+@@ -30,11 +31,15 @@ pub(crate) fn collect_explicit_skill_mentions(
+         match input {
+             UserInput::Skill { name, path } => {
+                 blocked_plain_names.insert(name.clone());
+-                select_by_path(catalog, &path.to_string_lossy(), &mut seen, &mut selected);
++                if !select_by_path(catalog, &path.to_string_lossy(), &mut seen, &mut selected) {
++                    unresolved.push(name.clone());
++                }
+             }
+             UserInput::Mention { name, path } if path_is_skill(path) => {
+                 blocked_plain_names.insert(name.clone());
+-                select_by_path(catalog, path, &mut seen, &mut selected);
++                if !select_by_path(catalog, path, &mut seen, &mut selected) {
++                    unresolved.push(name.clone());
++                }
+             }
+             UserInput::Text { .. } | UserInput::Image { .. } | UserInput::LocalImage { .. } => {}
+             UserInput::Mention { .. } => {}
+@@ -50,29 +55,45 @@ pub(crate) fn collect_explicit_skill_mentions(
+         let mentions = extract_tool_mentions(text);
+         for path in mentions.paths() {
+             if path_is_skill(path) {
+-                select_by_path(
++                if !select_by_path(
+                     catalog,
+                     normalize_skill_path(path),
+                     &mut seen,
+                     &mut selected,
+-                );
++                ) {
++                    unresolved.push(path.to_string());
++                }
+             }
+         }
+         for name in mentions.plain_names() {
+             if blocked_plain_names.contains(name) {
+                 continue;
+             }
+-            if let Some(entry) = catalog
++            let matches = catalog
+                 .entries
+                 .iter()
+-                .find(|entry| entry.enabled && entry.name == name)
+-            {
++                .filter(|entry| entry.enabled && entry.name == name)
++                .collect::<Vec<_>>();
++            if let [entry] = matches.as_slice() {
+                 push_selected(entry, &mut seen, &mut selected);
++            } else {
++                unresolved.push(name.to_string());
+             }
+         }
+     }
+ 
+-    selected
++    if !unresolved.is_empty() {
++        selected.clear();
++    }
++    ExplicitSkillSelection {
++        entries: selected,
++        unresolved,
++    }
++}
++
++pub(crate) struct ExplicitSkillSelection {
++    pub(crate) entries: Vec<SkillCatalogEntry>,
++    pub(crate) unresolved: Vec<String>,
+ }
+ 
+ fn select_by_path(
+@@ -80,13 +101,18 @@ fn select_by_path(
+     path: &str,
+     seen: &mut HashSet<SkillCatalogEntryKey>,
+     selected: &mut Vec<SkillCatalogEntry>,
+-) {
++) -> bool {
+     let normalized_path = normalize_skill_path(path);
+-    for entry in catalog.entries.iter().filter(|entry| entry.enabled) {
+-        if entry_matches_path(entry, normalized_path) {
+-            push_selected(entry, seen, selected);
+-        }
+-    }
++    let matches = catalog
++        .entries
++        .iter()
++        .filter(|entry| entry.enabled && entry_matches_path(entry, normalized_path))
++        .collect::<Vec<_>>();
++    let [entry] = matches.as_slice() else {
++        return false;
++    };
++    push_selected(entry, seen, selected);
++    true
+ }
+ 
+ fn push_selected(
+@@ -135,3 +161,7 @@ impl From<&SkillCatalogEntry> for SkillCatalogEntryKey {
+         }
+     }
+ }
++
++#[cfg(test)]
++#[path = "selection_tests.rs"]
++mod tests;
+diff --git a/codex-rs/ext/skills/src/selection_tests.rs b/codex-rs/ext/skills/src/selection_tests.rs
+new file mode 100644
+index 0000000..f42c5ae
+--- /dev/null
++++ b/codex-rs/ext/skills/src/selection_tests.rs
+@@ -0,0 +1,40 @@
++use codex_protocol::user_input::UserInput;
++
++use super::collect_explicit_skill_mentions;
++use crate::catalog::SkillAuthority;
++use crate::catalog::SkillCatalog;
++use crate::catalog::SkillCatalogEntry;
++use crate::catalog::SkillPackageId;
++use crate::catalog::SkillResourceId;
++use crate::catalog::SkillSourceKind;
++
++#[test]
++fn one_ambiguous_explicit_name_rejects_the_whole_set() {
++    let entry = |package: &str, name: &str| {
++        SkillCatalogEntry::new(
++            SkillPackageId(package.to_string()),
++            SkillAuthority::new(SkillSourceKind::Host, "host"),
++            name,
++            "description",
++            SkillResourceId::new(format!("/{package}/SKILL.md")),
++        )
++    };
++    let catalog = SkillCatalog {
++        entries: vec![
++            entry("first-review", "review"),
++            entry("second-review", "review"),
++            entry("unique", "unique"),
++        ],
++        warnings: Vec::new(),
++    };
++    let selection = collect_explicit_skill_mentions(
++        &[UserInput::Text {
++            text: "$review $unique".to_string(),
++            text_elements: Vec::new(),
++        }],
++        &catalog,
++    );
++
++    assert!(selection.entries.is_empty());
++    assert_eq!(selection.unresolved, vec!["review"]);
++}
+diff --git a/codex-rs/ext/skills/src/shadow_selection_experiment.rs b/codex-rs/ext/skills/src/shadow_selection_experiment.rs
+index a614704..660f89f 100644
+--- a/codex-rs/ext/skills/src/shadow_selection_experiment.rs
++++ b/codex-rs/ext/skills/src/shadow_selection_experiment.rs
+@@ -10,7 +10,6 @@ use codex_otel::MetricsClient;
+ use codex_protocol::user_input::UserInput;
+ 
+ use crate::catalog::SkillCatalog;
+-use crate::catalog::SkillSourceKind;
+ use crate::dynamic_skill_selector::CheapSkillSelection;
+ use crate::dynamic_skill_selector::CheapSkillSelector;
+ use crate::dynamic_skill_selector::SkillSelectionDocument;
+@@ -18,6 +17,7 @@ use crate::dynamic_skill_selector::WeightedLexicalSkillSelector;
+ 
+ const MAX_SHADOW_QUERY_BYTES: usize = 16 * 1024;
+ const MAX_SHADOW_RESULTS: usize = 20;
++const MAX_ROUTING_DESCRIPTION_BYTES: usize = 4 * 1024;
+ 
+ const RUN_METRIC: &str = "codex.skills.shadow_selection";
+ const DURATION_METRIC: &str = "codex.skills.shadow_selection.duration_ms";
+@@ -47,25 +47,21 @@ impl ShadowSelectionExperiment {
+     ) -> ShadowSelectionTurnState {
+         let query = build_shadow_query(inputs);
+         let query_script = query_script_tag(&query.text);
++        let routing_descriptions = catalog
++            .entries
++            .iter()
++            .map(routing_description)
++            .collect::<Vec<_>>();
+         let documents = catalog
+             .entries
+             .iter()
+             .enumerate()
+-            .filter(|(_, entry)| {
+-                entry.enabled
+-                    && entry.prompt_visible
+-                    // Invocation observation currently exists only for host shell use and
+-                    // orchestrator reads. Keep the candidate set aligned with that universe.
+-                    && matches!(
+-                        &entry.authority.kind,
+-                        SkillSourceKind::Host | SkillSourceKind::Orchestrator
+-                    )
+-            })
++            .filter(|(_, entry)| entry.enabled && entry.prompt_visible)
+             .map(|(id, entry)| SkillSelectionDocument {
+                 id,
+                 name: entry.name.as_str(),
+                 short_description: entry.short_description.as_deref(),
+-                description: entry.description.as_str(),
++                description: routing_descriptions[id].as_str(),
+             })
+             .collect::<Vec<_>>();
+         let eligible_ids = documents
+@@ -91,6 +87,7 @@ impl ShadowSelectionExperiment {
+             });
+             ranked_selections.push(RankedSelection {
+                 method: selector.method(),
++                candidate_ids: selected_ids.clone(),
+                 skill_resources: selected_ids
+                     .iter()
+                     .map(|id| normalize_skill_resource(catalog.entries[*id].main_prompt.as_str()))
+@@ -201,9 +198,71 @@ pub(crate) struct ShadowSelectionTurnState {
+ 
+ struct RankedSelection {
+     method: &'static str,
++    candidate_ids: Vec<usize>,
+     skill_resources: Vec<String>,
+ }
+ 
++fn routing_description(entry: &crate::catalog::SkillCatalogEntry) -> String {
++    let mut text = String::new();
++    for value in [
++        entry.description.as_str(),
++        entry.authority.id.as_str(),
++        entry.id.0.as_str(),
++        entry.rendered_path(),
++    ] {
++        push_routing_hint(&mut text, value);
++    }
++    if let Some(scope) = entry.scope {
++        push_routing_hint(&mut text, &format!("{scope:?}"));
++    }
++    if let Some(plugin_id) = entry.plugin_id.as_deref() {
++        push_routing_hint(&mut text, plugin_id);
++    }
++    if let Some(dependencies) = &entry.dependencies {
++        for dependency in &dependencies.tools {
++            for value in [
++                Some(dependency.r#type.as_str()),
++                Some(dependency.value.as_str()),
++                dependency.description.as_deref(),
++                dependency.transport.as_deref(),
++                dependency.command.as_deref(),
++                dependency.url.as_deref(),
++            ]
++            .into_iter()
++            .flatten()
++            {
++                push_routing_hint(&mut text, value);
++            }
++        }
++    }
++    text
++}
++
++fn push_routing_hint(destination: &mut String, value: &str) {
++    if destination.len() >= MAX_ROUTING_DESCRIPTION_BYTES {
++        return;
++    }
++    if !destination.is_empty() {
++        destination.push(' ');
++    }
++    let remaining = MAX_ROUTING_DESCRIPTION_BYTES.saturating_sub(destination.len());
++    let mut end = remaining.min(value.len());
++    while !value.is_char_boundary(end) {
++        end = end.saturating_sub(1);
++    }
++    destination.push_str(&value[..end]);
++}
++
++impl ShadowSelectionTurnState {
++    pub(crate) fn candidate_ids(&self, limit: usize) -> impl Iterator<Item = usize> + '_ {
++        self.ranked_selections
++            .first()
++            .into_iter()
++            .flat_map(|selection| selection.candidate_ids.iter().copied())
++            .take(limit)
++    }
++}
++
+ struct ShadowSelectionObservation<'a> {
+     method: &'static str,
+     selection: &'a CheapSkillSelection,
+diff --git a/codex-rs/ext/skills/src/state.rs b/codex-rs/ext/skills/src/state.rs
+index db6fae9..551ed0a 100644
+--- a/codex-rs/ext/skills/src/state.rs
++++ b/codex-rs/ext/skills/src/state.rs
+@@ -1,4 +1,5 @@
+ use std::collections::HashMap;
++use std::collections::HashSet;
+ use std::future::Future;
+ use std::sync::Arc;
+ use std::sync::Mutex;
+@@ -32,6 +33,8 @@ pub(crate) struct SkillsThreadState {
+     executor_cache: Mutex<Vec<CachedExecutorCatalog>>,
+     orchestrator_cache: Mutex<Option<Arc<OrchestratorGenerationCache>>>,
+     shadow_selection_turn: Mutex<Option<ShadowSelectionTurn>>,
++    routing_turn: Mutex<Option<RoutingTurn>>,
++    previous_routing_query: Mutex<Option<String>>,
+ }
+ 
+ impl SkillsThreadState {
+@@ -42,6 +45,8 @@ impl SkillsThreadState {
+             executor_cache: Mutex::new(Vec::new()),
+             orchestrator_cache: Mutex::new(None),
+             shadow_selection_turn: Mutex::new(None),
++            routing_turn: Mutex::new(None),
++            previous_routing_query: Mutex::new(None),
+         }
+     }
+ 
+@@ -90,6 +95,99 @@ impl SkillsThreadState {
+             .map(|turn| Arc::clone(&turn.state))
+     }
+ 
++    pub(crate) fn replace_routing_turn(
++        &self,
++        turn_id: String,
++        catalog: SkillCatalog,
++        host_snapshot: Option<Arc<codex_core_skills::HostSkillsSnapshot>>,
++    ) {
++        *self
++            .routing_turn
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(RoutingTurn {
++            turn_id,
++            catalog,
++            host_snapshot,
++            search_calls: 0,
++            initial_candidate_refs: HashSet::new(),
++            returned_search_refs: HashSet::new(),
++        });
++    }
++
++    pub(crate) fn routing_turn(
++        &self,
++        turn_id: &str,
++    ) -> Option<(
++        SkillCatalog,
++        Option<Arc<codex_core_skills::HostSkillsSnapshot>>,
++    )> {
++        self.routing_turn
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner)
++            .as_ref()
++            .filter(|turn| turn.turn_id == turn_id)
++            .map(|turn| (turn.catalog.clone(), turn.host_snapshot.clone()))
++    }
++
++    pub(crate) fn register_recovery_search(
++        &self,
++        turn_id: &str,
++        candidates: impl IntoIterator<Item = String>,
++        limit: usize,
++    ) -> Result<HashSet<String>, &'static str> {
++        let mut routing_turn = self
++            .routing_turn
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner);
++        let Some(turn) = routing_turn.as_mut().filter(|turn| turn.turn_id == turn_id) else {
++            return Err("the skill catalog snapshot for this turn is unavailable");
++        };
++        if turn.search_calls >= 2 {
++            return Err("skills.search permits at most two calls per turn");
++        }
++        turn.search_calls = turn.search_calls.saturating_add(1);
++        let mut accepted = HashSet::new();
++        for candidate in candidates {
++            if accepted.len() >= limit || turn.returned_search_refs.len() >= 16 {
++                break;
++            }
++            if !turn.initial_candidate_refs.contains(&candidate)
++                && turn.returned_search_refs.insert(candidate.clone())
++            {
++                accepted.insert(candidate);
++            }
++        }
++        Ok(accepted)
++    }
++
++    pub(crate) fn set_initial_candidates(
++        &self,
++        turn_id: &str,
++        candidates: impl IntoIterator<Item = String>,
++    ) {
++        let mut routing_turn = self
++            .routing_turn
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner);
++        if let Some(turn) = routing_turn.as_mut().filter(|turn| turn.turn_id == turn_id) {
++            turn.initial_candidate_refs = candidates.into_iter().collect();
++        }
++    }
++
++    pub(crate) fn previous_routing_query(&self) -> Option<String> {
++        self.previous_routing_query
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner)
++            .clone()
++    }
++
++    pub(crate) fn set_previous_routing_query(&self, query: String) {
++        *self
++            .previous_routing_query
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(query);
++    }
++
+     /// Returns catalogs for stable selected roots.
+     ///
+     /// The first catalog returned for a root remains cached until this thread state is dropped.
+@@ -231,6 +329,15 @@ struct ShadowSelectionTurn {
+     state: Arc<ShadowSelectionTurnState>,
+ }
+ 
++struct RoutingTurn {
++    turn_id: String,
++    catalog: SkillCatalog,
++    host_snapshot: Option<Arc<codex_core_skills::HostSkillsSnapshot>>,
++    search_calls: usize,
++    initial_candidate_refs: HashSet<String>,
++    returned_search_refs: HashSet<String>,
++}
++
+ struct CachedExecutorCatalog {
+     root: SelectedCapabilityRoot,
+     catalog: SkillCatalog,
+diff --git a/codex-rs/ext/skills/tests/implicit_invocation.rs b/codex-rs/ext/skills/tests/implicit_invocation.rs
+index bfd37d6..e9c50ce 100644
+--- a/codex-rs/ext/skills/tests/implicit_invocation.rs
++++ b/codex-rs/ext/skills/tests/implicit_invocation.rs
+@@ -139,6 +139,7 @@ async fn implicit_core_and_native_read_invocations_share_turn_local_recording()
+             bundled_skills_enabled: false,
+             orchestrator_skills_enabled: true,
+             shadow_selection_enabled: true,
++            adaptive_routing_enabled: false,
+         },
+     );
+     let registry = builder.build();
+@@ -232,6 +233,7 @@ async fn shadow_selection_uses_host_snapshot_and_excludes_executor_candidates()
+             bundled_skills_enabled: false,
+             orchestrator_skills_enabled: false,
+             shadow_selection_enabled: true,
++            adaptive_routing_enabled: false,
+         },
+     );
+     let registry = builder.build();
+diff --git a/codex-rs/ext/skills/tests/skills_extension.rs b/codex-rs/ext/skills/tests/skills_extension.rs
+index da83a31..3b2c31e 100644
+--- a/codex-rs/ext/skills/tests/skills_extension.rs
++++ b/codex-rs/ext/skills/tests/skills_extension.rs
+@@ -5,7 +5,6 @@ use std::sync::atomic::AtomicUsize;
+ use std::sync::atomic::Ordering;
+ 
+ use codex_core_skills::HostSkillsSnapshot;
+-use codex_core_skills::SKILLS_INTRO_WITH_ABSOLUTE_PATHS;
+ use codex_core_skills::SkillLoadOutcome;
+ use codex_core_skills::SkillMetadata;
+ use codex_core_skills::injection::InjectedHostSkillPrompts;
+@@ -24,8 +23,6 @@ use codex_protocol::capabilities::CapabilityRootLocation;
+ use codex_protocol::capabilities::SelectedCapabilityRoot;
+ use codex_protocol::protocol::Event;
+ use codex_protocol::protocol::EventMsg;
+-use codex_protocol::protocol::SKILLS_INSTRUCTIONS_CLOSE_TAG;
+-use codex_protocol::protocol::SKILLS_INSTRUCTIONS_OPEN_TAG;
+ use codex_protocol::protocol::SessionSource;
+ use codex_protocol::protocol::SkillScope;
+ use codex_protocol::protocol::TruncationPolicy;
+@@ -124,14 +121,11 @@ async fn installed_extension_uses_host_service_snapshot() -> TestResult {
+         )
+         .await;
+ 
+-    let expected_catalog = format!(
+-        "{SKILLS_INSTRUCTIONS_OPEN_TAG}\n## Skills\n{SKILLS_INTRO_WITH_ABSOLUTE_PATHS}\n### Available skills\n- demo: Demo skill. (file: {skill_prompt_path})\n{SKILLS_INSTRUCTIONS_CLOSE_TAG}"
+-    );
+     let expected_skill = format!(
+         "<skill>\n<name>demo</name>\n<path>{skill_prompt_path}</path>\n{DEMO_SKILL_CONTENTS}\n</skill>"
+     );
+     assert_eq!(
+-        vec![("developer", expected_catalog), ("user", expected_skill),],
++        vec![("user", expected_skill)],
+         fragments
+             .iter()
+             .map(|fragment| (fragment.role(), fragment.render()))
+@@ -777,12 +771,138 @@ fn test_entry(
+     .with_display_path(format!("skill://{package_id}/SKILL.md"))
+ }
+ 
++#[tokio::test]
++async fn adaptive_routing_replaces_a_lossy_catalog_with_cross_authority_candidates() -> TestResult {
++    let mut entries = (0..40)
++        .map(|index| {
++            SkillCatalogEntry::new(
++                SkillPackageId(format!("orchestrator/filler-{index}")),
++                SkillAuthority::new(SkillSourceKind::Orchestrator, "codex_apps"),
++                format!("filler-{index}"),
++                format!("Manage unrelated capability {index}. {}", "x".repeat(256)),
++                SkillResourceId::new(format!("skill://orchestrator/filler-{index}/SKILL.md")),
++            )
++        })
++        .collect::<Vec<_>>();
++    entries.push(SkillCatalogEntry::new(
++        SkillPackageId("orchestrator/pdf".to_string()),
++        SkillAuthority::new(SkillSourceKind::Orchestrator, "codex_apps"),
++        "pdf",
++        "Create PDF documents and reports.",
++        SkillResourceId::new("skill://orchestrator/pdf/SKILL.md"),
++    ));
++    let providers =
++        SkillProviders::new().with_orchestrator_provider(Arc::new(StaticSkillProvider {
++            catalog: SkillCatalog {
++                entries,
++                warnings: Vec::new(),
++            },
++            read_requests: Arc::new(Mutex::new(Vec::new())),
++            list_calls: None,
++            fail_first_list: false,
++        }));
++    let mut builder = ExtensionRegistryBuilder::new();
++    install_with_providers(&mut builder, providers, skills_extension_config);
++    let registry = builder.build();
++    let session_store = ExtensionData::new("session");
++    let thread_store = ExtensionData::new("thread");
++    let mut config = default_config();
++    config.adaptive_routing_enabled = true;
++    registry.thread_lifecycle_contributors()[0]
++        .on_thread_start(ThreadStartInput {
++            config: &config,
++            session_source: &SessionSource::Cli,
++            persistent_thread_state_available: true,
++            environments: &[],
++            session_store: &session_store,
++            thread_store: &thread_store,
++        })
++        .await;
++
++    assert!(
++        registry.context_contributors()[0]
++            .contribute_thread_context(&session_store, &thread_store)
++            .await
++            .is_empty()
++    );
++    let fragments = registry.turn_input_contributors()[0]
++        .contribute(
++            TurnInputContext {
++                turn_id: "turn-1".to_string(),
++                user_input: vec![UserInput::Text {
++                    text: "Create a PDF report".to_string(),
++                    text_elements: Vec::new(),
++                }],
++                environments: Vec::new(),
++            },
++            &session_store,
++            &thread_store,
++            &ExtensionData::new("turn-1"),
++        )
++        .await;
++
++    assert_eq!(1, fragments.len());
++    let rendered = fragments[0].render();
++    assert!(rendered.contains("- pdf: Create PDF documents and reports."));
++    assert!(!rendered.contains("filler-"));
++
++    let continuation = registry.turn_input_contributors()[0]
++        .contribute(
++            TurnInputContext {
++                turn_id: "turn-2".to_string(),
++                user_input: vec![UserInput::Text {
++                    text: "do the same here".to_string(),
++                    text_elements: Vec::new(),
++                }],
++                environments: Vec::new(),
++            },
++            &session_store,
++            &thread_store,
++            &ExtensionData::new("turn-2"),
++        )
++        .await;
++    assert_eq!(1, continuation.len());
++    assert!(
++        continuation[0]
++            .render()
++            .contains("- pdf: Create PDF documents and reports.")
++    );
++
++    let tools = registry.tool_contributors()[0].tools(&session_store, &thread_store);
++    let search_tool = tools
++        .iter()
++        .find(|tool| tool.tool_name().name == "search")
++        .ok_or("skills.search tool should be registered")?;
++    let search_payload = ToolPayload::Function {
++        arguments: serde_json::json!({"goal": "use filler-30"}).to_string(),
++    };
++    let output = search_tool
++        .handle(ToolCall {
++            turn_id: "turn-2".to_string(),
++            call_id: "search-1".to_string(),
++            tool_name: search_tool.tool_name(),
++            model: "gpt-test".to_string(),
++            truncation_policy: TruncationPolicy::Bytes(1_024),
++            conversation_history: ConversationHistory::default(),
++            turn_item_emitter: Arc::new(NoopTurnItemEmitter),
++            environments: Vec::new(),
++            payload: search_payload.clone(),
++        })
++        .await?;
++    let response = output
++        .post_tool_use_response("search-1", &search_payload)
++        .ok_or("skills.search should expose structured output")?;
++    assert_eq!(response["matches"][0]["name"], "filler-30");
++    Ok(())
++}
++
+ #[derive(Clone, Debug, Eq, PartialEq)]
+ struct TestConfig {
+     include_instructions: bool,
+     bundled_skills_enabled: bool,
+     orchestrator_skills_enabled: bool,
+     shadow_selection_enabled: bool,
++    adaptive_routing_enabled: bool,
+ }
+ 
+ fn default_config() -> TestConfig {
+@@ -791,6 +911,7 @@ fn default_config() -> TestConfig {
+         bundled_skills_enabled: true,
+         orchestrator_skills_enabled: true,
+         shadow_selection_enabled: false,
++        adaptive_routing_enabled: false,
+     }
+ }
+ 
+@@ -800,6 +921,7 @@ fn skills_extension_config(config: &TestConfig) -> SkillsExtensionConfig {
+         bundled_skills_enabled: config.bundled_skills_enabled,
+         orchestrator_skills_enabled: config.orchestrator_skills_enabled,
+         shadow_selection_enabled: config.shadow_selection_enabled,
++        adaptive_routing_enabled: config.adaptive_routing_enabled,
+     }
+ }
+ 
+diff --git a/codex-rs/features/src/lib.rs b/codex-rs/features/src/lib.rs
+index dae5ccd..95d1ca1 100644
+--- a/codex-rs/features/src/lib.rs
++++ b/codex-rs/features/src/lib.rs
+@@ -208,6 +208,8 @@ pub enum Feature {
+     SkillMcpDependencyInstall,
+     /// Run cheap skill-search methods in shadow mode and emit experiment metrics.
+     SkillSearch,
++    /// Replace lossy skill catalogues with adaptive candidates and recovery search.
++    AdaptiveSkillRouting,
+     /// Removed compatibility flag for deleted skill env var dependency prompting.
+     SkillEnvVarDependencyPrompt,
+     /// Enable the unified mention popup used by default in the TUI.
+@@ -1198,6 +1200,12 @@ pub const FEATURES: &[FeatureSpec] = &[
+         stage: Stage::Stable,
+         default_enabled: true,
+     },
++    FeatureSpec {
++        id: Feature::AdaptiveSkillRouting,
++        key: "adaptive_skill_routing",
++        stage: Stage::UnderDevelopment,
++        default_enabled: false,
++    },
+     FeatureSpec {
+         id: Feature::SkillEnvVarDependencyPrompt,
+         key: "skill_env_var_dependency_prompt",
+-- 
+2.47.1.windows.2
+

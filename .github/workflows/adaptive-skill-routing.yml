@@ -1,0 +1,47 @@
+name: adaptive-skill-routing
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "adaptive-skill-routing"
+    paths:
+      - "codex-adaptive-skill-routing/**"
+      - ".github/workflows/adaptive-skill-routing.yml"
+  pull_request:
+    paths:
+      - "codex-adaptive-skill-routing/**"
+      - ".github/workflows/adaptive-skill-routing.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out patch project
+        uses: actions/checkout@v4
+
+      - name: Check out pinned Codex baseline
+        uses: actions/checkout@v4
+        with:
+          repository: openai/codex
+          ref: c7a4a7e136d96554e1fc6f66532e6060fd2aaf15
+          path: codex
+
+      - name: Apply patch series
+        run: |
+          for patch in codex-adaptive-skill-routing/patches/*.patch; do
+            git -C codex am "../$patch"
+          done
+
+      - name: Install repository Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.95.0
+          components: rustfmt
+
+      - name: Verify
+        working-directory: codex
+        run: ../codex-adaptive-skill-routing/scripts/verify.sh

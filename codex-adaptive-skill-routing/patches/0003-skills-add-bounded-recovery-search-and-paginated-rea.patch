@@ -1,0 +1,512 @@
+From 2fd12aeed1b84b0a6fe77c0d39084afecbf47317 Mon Sep 17 00:00:00 2001
+From: Binilts03 <81070341+Binilts03@users.noreply.github.com>
+Date: Mon, 13 Jul 2026 21:15:02 +0530
+Subject: [PATCH 3/3] skills: add bounded recovery search and paginated reads
+
+---
+ codex-rs/ext/skills/src/tools/list.rs       |  26 +++-
+ codex-rs/ext/skills/src/tools/mod.rs        |  58 ++++++--
+ codex-rs/ext/skills/src/tools/read.rs       |  74 +++++++++-
+ codex-rs/ext/skills/src/tools/read_tests.rs |  21 +++
+ codex-rs/ext/skills/src/tools/search.rs     | 154 ++++++++++++++++++++
+ 5 files changed, 311 insertions(+), 22 deletions(-)
+ create mode 100644 codex-rs/ext/skills/src/tools/read_tests.rs
+ create mode 100644 codex-rs/ext/skills/src/tools/search.rs
+
+diff --git a/codex-rs/ext/skills/src/tools/list.rs b/codex-rs/ext/skills/src/tools/list.rs
+index e556f97..93d2c82 100644
+--- a/codex-rs/ext/skills/src/tools/list.rs
++++ b/codex-rs/ext/skills/src/tools/list.rs
+@@ -28,6 +28,8 @@ const MAX_WARNING_BYTES: usize = 256;
+ #[serde(deny_unknown_fields)]
+ struct ListArgs {
+     authority: SkillToolAuthority,
++    #[serde(default)]
++    offset: usize,
+ }
+ 
+ #[derive(Debug, Eq, JsonSchema, PartialEq, Serialize)]
+@@ -45,6 +47,7 @@ struct ListedSkill {
+ struct ListResponse {
+     skills: Vec<ListedSkill>,
+     warnings: Vec<String>,
++    next_offset: Option<usize>,
+ }
+ 
+ #[derive(Clone)]
+@@ -60,23 +63,36 @@ impl ToolExecutor<ToolCall> for ListTool {
+     fn spec(&self) -> ToolSpec {
+         skill_function_tool::<ListArgs, ListResponse>(
+             TOOL_NAME,
+-            "List enabled skills owned by the requested authority. Only orchestrator-owned skills are currently supported. Returns the opaque package and main-resource handles required by skills.read.",
++            "List one bounded page of enabled skills owned by the requested authority in the immutable current-turn catalog. Continue with next_offset when present. Returns the opaque package and main-resource handles required by skills.read.",
+         )
+     }
+ 
+     fn handle(&self, call: ToolCall) -> ToolExecutorFuture<'_> {
+         Box::pin(async move {
+             let args: ListArgs = parse_args(&call)?;
+-            let authority = args.authority.into_authority();
++            let authority = args.authority.clone().into_authority();
+             let catalog = self.context.catalog(&call.turn_id, args.authority).await;
++            let eligible = catalog
++                .entries
++                .into_iter()
++                .filter(|entry| entry.enabled && entry.authority == authority)
++                .collect::<Vec<_>>();
++            if args.offset > eligible.len() {
++                return Err(codex_extension_api::FunctionCallError::RespondToModel(
++                    "offset is outside the available skill list".to_string(),
++                ));
++            }
++            let next_offset = (args.offset.saturating_add(8) < eligible.len())
++                .then_some(args.offset.saturating_add(8));
+             let response = ListResponse {
+-                skills: catalog
+-                    .entries
++                skills: eligible
+                     .into_iter()
+-                    .filter(|entry| entry.enabled && entry.authority == authority)
++                    .skip(args.offset)
++                    .take(8)
+                     .filter_map(listed_skill)
+                     .collect(),
+                 warnings: bounded_warnings(catalog.warnings),
++                next_offset,
+             };
+ 
+             external_json_output(&response)
+diff --git a/codex-rs/ext/skills/src/tools/mod.rs b/codex-rs/ext/skills/src/tools/mod.rs
+index 286b043..a243668 100644
+--- a/codex-rs/ext/skills/src/tools/mod.rs
++++ b/codex-rs/ext/skills/src/tools/mod.rs
+@@ -30,6 +30,7 @@ use crate::state::SkillsThreadState;
+ mod list;
+ mod read;
+ mod schema;
++mod search;
+ 
+ const SKILLS_NAMESPACE: &str = "skills";
+ const MAX_HANDLE_BYTES: usize = 2_048;
+@@ -50,7 +51,10 @@ pub(crate) fn skill_tools(
+         Arc::new(list::ListTool {
+             context: context.clone(),
+         }),
+-        Arc::new(read::ReadTool { context }),
++        Arc::new(read::ReadTool {
++            context: context.clone(),
++        }),
++        Arc::new(search::SearchTool { context }),
+     ]
+ }
+ 
+@@ -64,8 +68,13 @@ struct SkillToolContext {
+ 
+ impl SkillToolContext {
+     async fn catalog(&self, turn_id: &str, authority: SkillToolAuthority) -> SkillCatalog {
++        if let Some((mut catalog, _)) = self.thread_state.routing_turn(turn_id) {
++            let authority = authority.into_authority();
++            catalog.entries.retain(|entry| entry.authority == authority);
++            return catalog;
++        }
+         match authority {
+-            SkillToolAuthority::Orchestrator => {
++            SkillToolAuthority::Orchestrator { .. } => {
+                 self.thread_state
+                     .orchestrator_catalog_snapshot(
+                         self.mcp_resources.as_deref(),
+@@ -81,30 +90,57 @@ impl SkillToolContext {
+                     )
+                     .await
+             }
++            SkillToolAuthority::Host
++            | SkillToolAuthority::Executor { .. }
++            | SkillToolAuthority::Custom { .. } => SkillCatalog::default(),
+         }
+     }
+ }
+ 
+-#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
++#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+ #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+ enum SkillToolAuthority {
+-    Orchestrator,
++    Host,
++    Executor {
++        id: String,
++    },
++    Orchestrator {
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        id: Option<String>,
++    },
++    Custom {
++        source_kind: String,
++        id: String,
++    },
+ }
+ 
+ impl SkillToolAuthority {
+     fn from_authority(authority: &SkillAuthority) -> Option<Self> {
+-        if authority
+-            != &SkillAuthority::new(SkillSourceKind::Orchestrator, CODEX_APPS_MCP_SERVER_NAME)
+-        {
+-            return None;
++        match &authority.kind {
++            SkillSourceKind::Host => Some(Self::Host),
++            SkillSourceKind::Executor => Some(Self::Executor {
++                id: authority.id.clone(),
++            }),
++            SkillSourceKind::Orchestrator => Some(Self::Orchestrator {
++                id: (authority.id != CODEX_APPS_MCP_SERVER_NAME).then(|| authority.id.clone()),
++            }),
++            SkillSourceKind::Custom(source_kind) => Some(Self::Custom {
++                source_kind: source_kind.clone(),
++                id: authority.id.clone(),
++            }),
+         }
+-        Some(Self::Orchestrator)
+     }
+ 
+     fn into_authority(self) -> SkillAuthority {
+         match self {
+-            Self::Orchestrator => {
+-                SkillAuthority::new(SkillSourceKind::Orchestrator, CODEX_APPS_MCP_SERVER_NAME)
++            Self::Host => SkillAuthority::new(SkillSourceKind::Host, "host"),
++            Self::Executor { id } => SkillAuthority::new(SkillSourceKind::Executor, id),
++            Self::Orchestrator { id } => SkillAuthority::new(
++                SkillSourceKind::Orchestrator,
++                id.unwrap_or_else(|| CODEX_APPS_MCP_SERVER_NAME.to_string()),
++            ),
++            Self::Custom { source_kind, id } => {
++                SkillAuthority::new(SkillSourceKind::custom(source_kind), id)
+             }
+         }
+     }
+diff --git a/codex-rs/ext/skills/src/tools/read.rs b/codex-rs/ext/skills/src/tools/read.rs
+index d2971db..852a236 100644
+--- a/codex-rs/ext/skills/src/tools/read.rs
++++ b/codex-rs/ext/skills/src/tools/read.rs
+@@ -22,6 +22,8 @@ use super::skill_tool_name;
+ use super::validate_handle;
+ 
+ const TOOL_NAME: &str = "read";
++const DEFAULT_PAGE_BYTES: usize = 8 * 1024;
++const MAX_PAGE_BYTES: usize = 8 * 1024;
+ 
+ #[derive(Deserialize, JsonSchema)]
+ #[serde(deny_unknown_fields)]
+@@ -29,6 +31,10 @@ struct ReadArgs {
+     authority: SkillToolAuthority,
+     package: String,
+     resource: String,
++    #[serde(default)]
++    offset: usize,
++    #[serde(default = "default_page_bytes")]
++    limit: usize,
+ }
+ 
+ #[derive(Debug, Eq, JsonSchema, PartialEq, Serialize)]
+@@ -36,6 +42,9 @@ struct ReadArgs {
+ struct ReadResponse {
+     resource: String,
+     contents: String,
++    offset: usize,
++    next_offset: Option<usize>,
++    eof: bool,
+ }
+ 
+ #[derive(Clone)]
+@@ -51,7 +60,7 @@ impl ToolExecutor<ToolCall> for ReadTool {
+     fn spec(&self) -> ToolSpec {
+         skill_function_tool::<ReadArgs, ReadResponse>(
+             TOOL_NAME,
+-            "Read one complete resource from an enabled skill. Pass the exact authority and package returned by skills.list; resource identifiers remain opaque and are routed to that authority.",
++            "Read one page from an enabled skill resource. Pass the exact authority, package, and resource returned by skills.list or skills.search. Continue with next_offset until eof is true.",
+         )
+     }
+ 
+@@ -61,8 +70,25 @@ impl ToolExecutor<ToolCall> for ReadTool {
+             let authority = args.authority.into_authority();
+             validate_handle("package", &args.package, MAX_HANDLE_BYTES)?;
+             validate_handle("resource", &args.resource, MAX_HANDLE_BYTES)?;
++            if args.limit == 0 || args.limit > MAX_PAGE_BYTES {
++                return Err(FunctionCallError::RespondToModel(format!(
++                    "limit must be between 1 and {MAX_PAGE_BYTES} bytes"
++                )));
++            }
+ 
+-            let catalog = self.context.catalog(&call.turn_id, args.authority).await;
++            let (catalog, host_snapshot) = if let Some((mut catalog, host_snapshot)) =
++                self.context.thread_state.routing_turn(&call.turn_id)
++            {
++                catalog.entries.retain(|entry| entry.authority == authority);
++                (catalog, host_snapshot)
++            } else {
++                let tool_authority = SkillToolAuthority::from_authority(&authority)
++                    .unwrap_or(SkillToolAuthority::Orchestrator { id: None });
++                (
++                    self.context.catalog(&call.turn_id, tool_authority).await,
++                    None,
++                )
++            };
+             let Some(skill_entry) = catalog.entries.iter().find(|entry| {
+                 entry.enabled && entry.authority == authority && entry.id.0 == args.package
+             }) else {
+@@ -71,8 +97,11 @@ impl ToolExecutor<ToolCall> for ReadTool {
+                 ));
+             };
+             let main_prompt = skill_entry.main_prompt.clone();
+-
+-            let requested_resource = SkillResourceId::new(args.resource);
++            let requested_resource = if main_prompt.as_str() == args.resource {
++                main_prompt.clone()
++            } else {
++                SkillResourceId::new(args.resource)
++            };
+             let result = self
+                 .context
+                 .thread_state
+@@ -82,7 +111,7 @@ impl ToolExecutor<ToolCall> for ReadTool {
+                         authority,
+                         package: SkillPackageId(args.package),
+                         resource: requested_resource.clone(),
+-                        host_snapshot: None,
++                        host_snapshot,
+                         mcp_resources: self.context.mcp_resources.clone(),
+                     },
+                 )
+@@ -113,10 +142,43 @@ impl ToolExecutor<ToolCall> for ReadTool {
+                     .record_invocation(&state, main_prompt.as_str());
+             }
+ 
++            let (contents, next_offset) = page(&result.contents, args.offset, args.limit)?;
+             external_json_output(&ReadResponse {
+                 resource: result.resource.as_str().to_string(),
+-                contents: result.contents,
++                contents,
++                offset: args.offset,
++                next_offset,
++                eof: next_offset.is_none(),
+             })
+         })
+     }
+ }
++
++fn default_page_bytes() -> usize {
++    DEFAULT_PAGE_BYTES
++}
++
++fn page(
++    contents: &str,
++    offset: usize,
++    limit: usize,
++) -> Result<(String, Option<usize>), FunctionCallError> {
++    if offset > contents.len() || !contents.is_char_boundary(offset) {
++        return Err(FunctionCallError::RespondToModel(
++            "offset must be a UTF-8 boundary within the resource".to_string(),
++        ));
++    }
++    let mut end = offset.saturating_add(limit).min(contents.len());
++    while end > offset && !contents.is_char_boundary(end) {
++        end = end.saturating_sub(1);
++    }
++    if end == offset && offset < contents.len() {
++        end = offset.saturating_add(contents[offset..].chars().next().map_or(0, char::len_utf8));
++    }
++    let next_offset = (end < contents.len()).then_some(end);
++    Ok((contents[offset..end].to_string(), next_offset))
++}
++
++#[cfg(test)]
++#[path = "read_tests.rs"]
++mod tests;
+diff --git a/codex-rs/ext/skills/src/tools/read_tests.rs b/codex-rs/ext/skills/src/tools/read_tests.rs
+new file mode 100644
+index 0000000..f8056e0
+--- /dev/null
++++ b/codex-rs/ext/skills/src/tools/read_tests.rs
+@@ -0,0 +1,21 @@
++use super::page;
++
++#[test]
++fn paginated_utf8_reads_reassemble_without_loss() {
++    let original = "a🙂b界c";
++    let mut offset = 0;
++    let mut rebuilt = String::new();
++
++    loop {
++        let (contents, next_offset) = page(original, offset, 2).expect("valid page");
++        assert!(!contents.is_empty());
++        rebuilt.push_str(&contents);
++        let Some(next_offset) = next_offset else {
++            break;
++        };
++        assert!(next_offset > offset);
++        offset = next_offset;
++    }
++
++    assert_eq!(rebuilt, original);
++}
+diff --git a/codex-rs/ext/skills/src/tools/search.rs b/codex-rs/ext/skills/src/tools/search.rs
+new file mode 100644
+index 0000000..6aad746
+--- /dev/null
++++ b/codex-rs/ext/skills/src/tools/search.rs
+@@ -0,0 +1,154 @@
++use codex_extension_api::FunctionCallError;
++use codex_extension_api::ToolCall;
++use codex_extension_api::ToolExecutor;
++use codex_extension_api::ToolExecutorFuture;
++use codex_extension_api::ToolName;
++use codex_extension_api::ToolSpec;
++use codex_protocol::user_input::UserInput;
++use schemars::JsonSchema;
++use serde::Deserialize;
++use serde::Serialize;
++
++use crate::render::truncate_catalog_skill_description;
++
++use super::SkillToolAuthority;
++use super::SkillToolContext;
++use super::external_json_output;
++use super::is_bounded_handle;
++use super::parse_args;
++use super::skill_function_tool;
++use super::skill_tool_name;
++
++const TOOL_NAME: &str = "search";
++const MAX_GOAL_BYTES: usize = 4 * 1024;
++const MAX_RESULTS: usize = 8;
++const MAX_EXCLUDED_REFS: usize = 16;
++const MAX_RESPONSE_METADATA_BYTES: usize = 8 * 1024;
++
++#[derive(Deserialize, JsonSchema)]
++#[serde(deny_unknown_fields)]
++struct SearchArgs {
++    goal: String,
++    #[serde(default)]
++    excluded_skill_refs: Vec<String>,
++}
++
++#[derive(Debug, Eq, JsonSchema, PartialEq, Serialize)]
++#[schemars(deny_unknown_fields)]
++struct SearchMatch {
++    skill_ref: String,
++    authority: SkillToolAuthority,
++    package: String,
++    name: String,
++    description: String,
++    main_resource: String,
++}
++
++#[derive(Debug, Eq, JsonSchema, PartialEq, Serialize)]
++#[schemars(deny_unknown_fields)]
++struct SearchResponse {
++    matches: Vec<SearchMatch>,
++}
++
++#[derive(Clone)]
++pub(super) struct SearchTool {
++    pub(super) context: SkillToolContext,
++}
++
++impl ToolExecutor<ToolCall> for SearchTool {
++    fn tool_name(&self) -> ToolName {
++        skill_tool_name(TOOL_NAME)
++    }
++
++    fn spec(&self) -> ToolSpec {
++        skill_function_tool::<SearchArgs, SearchResponse>(
++            TOOL_NAME,
++            "Search the enabled skill catalog for the current turn when the initially listed skills do not cover the task. Results are metadata only; pass the returned authority, package, and main_resource to skills.read.",
++        )
++    }
++
++    fn handle(&self, call: ToolCall) -> ToolExecutorFuture<'_> {
++        Box::pin(async move {
++            let args: SearchArgs = parse_args(&call)?;
++            if args.goal.is_empty() || args.goal.len() > MAX_GOAL_BYTES {
++                return Err(FunctionCallError::RespondToModel(format!(
++                    "goal must be non-empty and at most {MAX_GOAL_BYTES} bytes"
++                )));
++            }
++            if args.excluded_skill_refs.len() > MAX_EXCLUDED_REFS {
++                return Err(FunctionCallError::RespondToModel(format!(
++                    "excluded_skill_refs accepts at most {MAX_EXCLUDED_REFS} values"
++                )));
++            }
++            let Some((catalog, _)) = self.context.thread_state.routing_turn(&call.turn_id) else {
++                return Err(FunctionCallError::RespondToModel(
++                    "the skill catalog snapshot for this turn is unavailable".to_string(),
++                ));
++            };
++            let input = [UserInput::Text {
++                text: args.goal,
++                text_elements: Vec::new(),
++            }];
++            let selection = self.context.shadow_selection.run(&input, &catalog);
++            let candidates = selection
++                .candidate_ids(50)
++                .filter_map(|id| catalog.entries.get(id))
++                .filter(|entry| {
++                    !args
++                        .excluded_skill_refs
++                        .iter()
++                        .any(|excluded| excluded == entry.main_prompt.as_str())
++                })
++                .filter(|entry| {
++                    SkillToolAuthority::from_authority(&entry.authority).is_some()
++                        && is_bounded_handle(&entry.authority.id, super::MAX_HANDLE_BYTES)
++                        && is_bounded_handle(&entry.id.0, super::MAX_HANDLE_BYTES)
++                        && is_bounded_handle(entry.main_prompt.as_str(), super::MAX_HANDLE_BYTES)
++                })
++                .collect::<Vec<_>>();
++            let accepted = self
++                .context
++                .thread_state
++                .register_recovery_search(
++                    &call.turn_id,
++                    candidates
++                        .iter()
++                        .map(|entry| entry.main_prompt.as_str().to_string()),
++                    MAX_RESULTS,
++                )
++                .map_err(|message| FunctionCallError::RespondToModel(message.to_string()))?;
++            let mut matches = Vec::new();
++            let mut metadata_bytes = 0usize;
++            for entry in candidates
++                .into_iter()
++                .filter(|entry| accepted.contains(entry.main_prompt.as_str()))
++            {
++                let Some(authority) = SkillToolAuthority::from_authority(&entry.authority) else {
++                    continue;
++                };
++                let candidate = SearchMatch {
++                    skill_ref: entry.main_prompt.as_str().to_string(),
++                    authority,
++                    package: entry.id.0.clone(),
++                    name: entry.name.clone(),
++                    description: truncate_catalog_skill_description(&entry.description)
++                        .into_owned(),
++                    main_resource: entry.main_prompt.as_str().to_string(),
++                };
++                let candidate_bytes = serde_json::to_vec(&candidate)
++                    .map_err(|err| FunctionCallError::Fatal(err.to_string()))?
++                    .len();
++                if metadata_bytes.saturating_add(candidate_bytes) > MAX_RESPONSE_METADATA_BYTES {
++                    continue;
++                }
++                metadata_bytes = metadata_bytes.saturating_add(candidate_bytes);
++                matches.push(candidate);
++                if matches.len() == MAX_RESULTS {
++                    break;
++                }
++            }
++
++            external_json_output(&SearchResponse { matches })
++        })
++    }
++}
+-- 
+2.47.1.windows.2
+
