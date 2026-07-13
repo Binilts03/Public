@@ -64,6 +64,7 @@ The corrected problem is narrower and testable:
 3. `0003` — bounded recovery search and paginated reads.
 4. `0004` — compiler-driven visibility and non-exhaustive protocol fixes.
 5. `0005` — require meaningful fuzzy overlap so n-gram recovery does not admit unrelated skills.
+6. `0006` — preserve legacy shadow-selection authority scope when adaptive routing is disabled.
 
 Apply the patches to the pinned Codex baseline:
 

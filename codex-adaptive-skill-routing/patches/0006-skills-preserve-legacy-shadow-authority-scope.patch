@@ -1,0 +1,27 @@
+From 429839009cad17e1c68241ebe4c8f4cbb5038ba1 Mon Sep 17 00:00:00 2001
+From: Binilts03 <81070341+Binilts03@users.noreply.github.com>
+Date: Mon, 13 Jul 2026 21:52:14 +0530
+Subject: [PATCH] skills: preserve legacy shadow authority scope
+
+---
+ codex-rs/ext/skills/src/extension.rs | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/codex-rs/ext/skills/src/extension.rs b/codex-rs/ext/skills/src/extension.rs
+index 96f3ef2..87d9abf 100644
+--- a/codex-rs/ext/skills/src/extension.rs
++++ b/codex-rs/ext/skills/src/extension.rs
+@@ -295,7 +295,9 @@ where
+             };
+             let host_query = query.clone();
+             let mut catalog = self.list_skills(query, &thread_state).await;
+-            if let Some(executor_skills) = turn_store.get::<ExecutorSkillsStepState>() {
++            if config.adaptive_routing_enabled
++                && let Some(executor_skills) = turn_store.get::<ExecutorSkillsStepState>()
++            {
+                 catalog.extend(executor_skills.0.clone());
+             }
+             if config.adaptive_routing_enabled
+-- 
+2.47.1.windows.2
+

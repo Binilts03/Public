@@ -24,6 +24,8 @@ Baseline: `openai/codex@c7a4a7e136d96554e1fc6f66532e6060fd2aaf15`.
   small `0004` follow-up patch rather than rewriting review history;
 - selector findings are retained as the small `0005` follow-up patch, which
   rejects incidental n-gram overlap while preserving typo and CJK recovery;
+- an integration test exposed executor-catalog leakage into the legacy shadow
+  experiment; `0006` confines authority merging to adaptive-routing turns;
 - local `cargo check` reached Rust compilation but cannot link procedural macro
   build scripts because this Windows host intentionally has neither MSVC Build
   Tools nor Windows SDK import libraries;
