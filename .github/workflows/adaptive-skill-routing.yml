@@ -16,6 +16,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: adaptive-skill-routing-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -44,6 +48,26 @@ jobs:
           toolchain: 1.95.0
           components: rustfmt
 
+      - name: Restore Rust build cache
+        id: rust-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            codex/codex-rs/target
+          key: uasr-${{ runner.os }}-${{ hashFiles('codex/rust-toolchain.toml', 'codex/codex-rs/Cargo.lock') }}
+
       - name: Verify
         working-directory: codex
         run: bash ../codex-adaptive-skill-routing/scripts/verify.sh
+
+      - name: Save Rust build cache
+        if: always() && steps.rust-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            codex/codex-rs/target
+          key: ${{ steps.rust-cache.outputs.cache-primary-key }}
