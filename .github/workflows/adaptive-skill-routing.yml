@@ -46,4 +46,4 @@ jobs:
 
       - name: Verify
         working-directory: codex
-        run: ../codex-adaptive-skill-routing/scripts/verify.sh
+        run: bash ../codex-adaptive-skill-routing/scripts/verify.sh
