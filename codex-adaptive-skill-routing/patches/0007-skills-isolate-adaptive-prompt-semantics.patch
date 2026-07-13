@@ -1,0 +1,51 @@
+From cc973953dd2f10ed05a7d38e35f31e0ad0247033 Mon Sep 17 00:00:00 2001
+From: Binilts03 <81070341+Binilts03@users.noreply.github.com>
+Date: Mon, 13 Jul 2026 22:02:22 +0530
+Subject: [PATCH] skills: isolate adaptive prompt semantics
+
+---
+ codex-rs/ext/skills/src/extension.rs | 14 ++++++++++----
+ 1 file changed, 10 insertions(+), 4 deletions(-)
+
+diff --git a/codex-rs/ext/skills/src/extension.rs b/codex-rs/ext/skills/src/extension.rs
+index 87d9abf..c59f8d8 100644
+--- a/codex-rs/ext/skills/src/extension.rs
++++ b/codex-rs/ext/skills/src/extension.rs
+@@ -295,9 +295,7 @@ where
+             };
+             let host_query = query.clone();
+             let mut catalog = self.list_skills(query, &thread_state).await;
+-            if config.adaptive_routing_enabled
+-                && let Some(executor_skills) = turn_store.get::<ExecutorSkillsStepState>()
+-            {
++            if let Some(executor_skills) = turn_store.get::<ExecutorSkillsStepState>() {
+                 catalog.extend(executor_skills.0.clone());
+             }
+             if config.adaptive_routing_enabled
+@@ -338,6 +336,12 @@ where
+             let shadow_selection_turn =
+                 if config.shadow_selection_enabled || config.adaptive_routing_enabled {
+                     let mut shadow_catalog = catalog.clone();
++                    if !config.adaptive_routing_enabled {
++                        shadow_catalog.entries.retain(|entry| {
++                            entry.authority.kind != SkillSourceKind::Executor
++                                && entry.authority.kind != SkillSourceKind::Orchestrator
++                        });
++                    }
+                     if !config.adaptive_routing_enabled
+                         && host_snapshot.is_some()
+                         && let Ok(host_catalog) = HostSkillProvider::new().list(host_query).await
+@@ -395,7 +399,9 @@ where
+             thread_state
+                 .replace_shadow_selection_turn(input.turn_id.clone(), shadow_selection_turn);
+             let mut fragments: Vec<Box<dyn ContextualUserFragment + Send>> = Vec::new();
+-            if config.include_instructions && !has_explicit_selection {
++            if config.include_instructions
++                && (!has_explicit_selection || !config.adaptive_routing_enabled)
++            {
+                 let adaptive_active = adaptive_catalog.is_some();
+                 let mut turn_catalog = adaptive_catalog.unwrap_or_else(|| catalog.clone());
+                 if !config.adaptive_routing_enabled {
+-- 
+2.47.1.windows.2
+

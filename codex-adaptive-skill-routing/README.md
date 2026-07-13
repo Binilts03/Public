@@ -65,6 +65,7 @@ The corrected problem is narrower and testable:
 4. `0004` — compiler-driven visibility and non-exhaustive protocol fixes.
 5. `0005` — require meaningful fuzzy overlap so n-gram recovery does not admit unrelated skills.
 6. `0006` — preserve legacy shadow-selection authority scope when adaptive routing is disabled.
+7. `0007` — isolate adaptive prompt semantics while retaining legacy explicit executor and hidden-skill behavior.
 
 Apply the patches to the pinned Codex baseline:
 
