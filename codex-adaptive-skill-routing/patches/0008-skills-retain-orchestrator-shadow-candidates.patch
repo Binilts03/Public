@@ -1,0 +1,30 @@
+From 41f425a67c3d7275f2c23d4144720a7a2651bc10 Mon Sep 17 00:00:00 2001
+From: Binilts03 <81070341+Binilts03@users.noreply.github.com>
+Date: Mon, 13 Jul 2026 22:12:22 +0530
+Subject: [PATCH] skills: retain orchestrator shadow candidates
+
+---
+ codex-rs/ext/skills/src/extension.rs | 7 +++----
+ 1 file changed, 3 insertions(+), 4 deletions(-)
+
+diff --git a/codex-rs/ext/skills/src/extension.rs b/codex-rs/ext/skills/src/extension.rs
+index c59f8d8..34eae77 100644
+--- a/codex-rs/ext/skills/src/extension.rs
++++ b/codex-rs/ext/skills/src/extension.rs
+@@ -337,10 +337,9 @@ where
+                 if config.shadow_selection_enabled || config.adaptive_routing_enabled {
+                     let mut shadow_catalog = catalog.clone();
+                     if !config.adaptive_routing_enabled {
+-                        shadow_catalog.entries.retain(|entry| {
+-                            entry.authority.kind != SkillSourceKind::Executor
+-                                && entry.authority.kind != SkillSourceKind::Orchestrator
+-                        });
++                        shadow_catalog
++                            .entries
++                            .retain(|entry| entry.authority.kind != SkillSourceKind::Executor);
+                     }
+                     if !config.adaptive_routing_enabled
+                         && host_snapshot.is_some()
+-- 
+2.47.1.windows.2
+

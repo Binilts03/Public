@@ -29,6 +29,8 @@ Baseline: `openai/codex@c7a4a7e136d96554e1fc6f66532e6060fd2aaf15`.
 - the complete extension suite refined that boundary: `0007` keeps the merged
   catalogue available for explicit resolution, filters it only for the legacy
   shadow prompt, and limits explicit-catalog suppression to adaptive mode;
+- `0008` narrows that legacy shadow filter to executor authority only, retaining
+  the pre-existing orchestrator shadow-selection behavior;
 - local `cargo check` reached Rust compilation but cannot link procedural macro
   build scripts because this Windows host intentionally has neither MSVC Build
   Tools nor Windows SDK import libraries;

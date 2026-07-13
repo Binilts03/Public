@@ -66,6 +66,7 @@ The corrected problem is narrower and testable:
 5. `0005` — require meaningful fuzzy overlap so n-gram recovery does not admit unrelated skills.
 6. `0006` — preserve legacy shadow-selection authority scope when adaptive routing is disabled.
 7. `0007` — isolate adaptive prompt semantics while retaining legacy explicit executor and hidden-skill behavior.
+8. `0008` — retain legacy orchestrator candidates while excluding executor candidates from shadow selection.
 
 Apply the patches to the pinned Codex baseline:
 
