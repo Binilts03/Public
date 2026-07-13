@@ -67,6 +67,7 @@ The corrected problem is narrower and testable:
 6. `0006` — preserve legacy shadow-selection authority scope when adaptive routing is disabled.
 7. `0007` — isolate adaptive prompt semantics while retaining legacy explicit executor and hidden-skill behavior.
 8. `0008` — retain legacy orchestrator candidates while excluding executor candidates from shadow selection.
+9. `0009` — respect core ownership of the legacy host catalogue and avoid duplicate prompt injection.
 
 Apply the patches to the pinned Codex baseline:
 

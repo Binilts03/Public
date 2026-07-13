@@ -31,6 +31,9 @@ Baseline: `openai/codex@c7a4a7e136d96554e1fc6f66532e6060fd2aaf15`.
   shadow prompt, and limits explicit-catalog suppression to adaptive mode;
 - `0008` narrows that legacy shadow filter to executor authority only, retaining
   the pre-existing orchestrator shadow-selection behavior;
+- `0009` preserves legacy host-catalogue ownership: when a host snapshot exists,
+  explicit selection injects only the selected body instead of duplicating the
+  core-owned catalogue;
 - local `cargo check` reached Rust compilation but cannot link procedural macro
   build scripts because this Windows host intentionally has neither MSVC Build
   Tools nor Windows SDK import libraries;

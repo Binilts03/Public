@@ -1,0 +1,26 @@
+From 6f3275effc0f89960af606f4f03432e70345bf10 Mon Sep 17 00:00:00 2001
+From: Binilts03 <81070341+Binilts03@users.noreply.github.com>
+Date: Mon, 13 Jul 2026 22:24:13 +0530
+Subject: [PATCH] skills: respect legacy host catalog ownership
+
+---
+ codex-rs/ext/skills/src/extension.rs | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/codex-rs/ext/skills/src/extension.rs b/codex-rs/ext/skills/src/extension.rs
+index 34eae77..0af3cb6 100644
+--- a/codex-rs/ext/skills/src/extension.rs
++++ b/codex-rs/ext/skills/src/extension.rs
+@@ -399,7 +399,8 @@ where
+                 .replace_shadow_selection_turn(input.turn_id.clone(), shadow_selection_turn);
+             let mut fragments: Vec<Box<dyn ContextualUserFragment + Send>> = Vec::new();
+             if config.include_instructions
+-                && (!has_explicit_selection || !config.adaptive_routing_enabled)
++                && (!has_explicit_selection
++                    || (!config.adaptive_routing_enabled && host_snapshot.is_none()))
+             {
+                 let adaptive_active = adaptive_catalog.is_some();
+                 let mut turn_catalog = adaptive_catalog.unwrap_or_else(|| catalog.clone());
+-- 
+2.47.1.windows.2
+
