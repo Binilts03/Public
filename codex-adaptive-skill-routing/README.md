@@ -62,6 +62,7 @@ The corrected problem is narrower and testable:
 1. `0001` — shared authority-neutral rendering;
 2. `0002` — loss-aware routing, lifecycle, evidence, and explicit semantics;
 3. `0003` — bounded recovery search and paginated reads.
+4. `0004` — compiler-driven visibility and non-exhaustive protocol fixes.
 
 Apply the patches to the pinned Codex baseline:
 
@@ -88,4 +89,3 @@ Read in this order:
 The numbered engineering documents are normative where they describe behavior.
 When a document's pinned source snapshot differs from the baseline above, the
 baseline and patch series in this README control.
-

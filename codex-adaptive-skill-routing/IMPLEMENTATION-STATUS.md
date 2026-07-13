@@ -20,6 +20,8 @@ Baseline: `openai/codex@c7a4a7e136d96554e1fc6f66532e6060fd2aaf15`.
 - `cargo metadata --no-deps --format-version 1` passes;
 - `git diff --check` passes;
 - the patch series applies cleanly to the pinned baseline;
+- Linux CI reached the changed crates; compiler findings are retained as the
+  small `0004` follow-up patch rather than rewriting review history;
 - local `cargo check` reached Rust compilation but cannot link procedural macro
   build scripts because this Windows host intentionally has neither MSVC Build
   Tools nor Windows SDK import libraries;
@@ -38,4 +40,3 @@ and the upstream gates in `docs/11-verification-and-test-plan.md` pass.
 - no installer or environment mutation;
 - no default activation before evidence gates;
 - no change to the `SKILL.md` format.
-

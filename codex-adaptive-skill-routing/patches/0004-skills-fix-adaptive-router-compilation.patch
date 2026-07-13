@@ -1,0 +1,38 @@
+From f94e9ad7d688602061a187c14fff854c5ef4a65a Mon Sep 17 00:00:00 2001
+From: Binilts03 <81070341+Binilts03@users.noreply.github.com>
+Date: Mon, 13 Jul 2026 21:28:46 +0530
+Subject: [PATCH] skills: fix adaptive router compilation
+
+---
+ .../ext/skills/src/dynamic_skill_selector/weighted_lexical.rs   | 2 +-
+ codex-rs/ext/skills/src/extension.rs                            | 1 +
+ 2 files changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/codex-rs/ext/skills/src/dynamic_skill_selector/weighted_lexical.rs b/codex-rs/ext/skills/src/dynamic_skill_selector/weighted_lexical.rs
+index b871681..84549a2 100644
+--- a/codex-rs/ext/skills/src/dynamic_skill_selector/weighted_lexical.rs
++++ b/codex-rs/ext/skills/src/dynamic_skill_selector/weighted_lexical.rs
+@@ -8,7 +8,7 @@ const MAX_QUERY_BYTES: usize = 4 * 1024;
+ const MAX_QUERY_TERMS: usize = 64;
+ const MAX_DOCUMENT_BYTES: usize = 4 * 1024;
+ const MAX_DOCUMENT_TERMS: usize = 256;
+-pub(super) const MAX_CANDIDATES: usize = 10_000;
++pub(crate) const MAX_CANDIDATES: usize = 10_000;
+ const MAX_RESULTS: usize = 50;
+ 
+ const STOP_WORDS: &[&str] = &[
+diff --git a/codex-rs/ext/skills/src/extension.rs b/codex-rs/ext/skills/src/extension.rs
+index 30ff1f5..96f3ef2 100644
+--- a/codex-rs/ext/skills/src/extension.rs
++++ b/codex-rs/ext/skills/src/extension.rs
+@@ -507,6 +507,7 @@ fn routing_inputs(inputs: &[UserInput], previous: Option<&str>) -> Vec<UserInput
+             UserInput::Skill { name, .. } | UserInput::Mention { name, .. } => Some(name.as_str()),
+             UserInput::LocalImage { path, .. } => path.to_str(),
+             UserInput::Image { .. } => Some("image attachment"),
++            _ => None,
+         })
+         .collect::<Vec<_>>()
+         .join(" ");
+-- 
+2.47.1.windows.2
+
