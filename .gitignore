@@ -1,0 +1,4 @@
+.opencode/cache/
+node_modules/
+*.log
+test-results/
