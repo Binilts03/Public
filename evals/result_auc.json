@@ -1,0 +1,76 @@
+{
+ "steps": [
+  {
+   "tool": "cap_0100",
+   "deep": false,
+   "c_full": 14064,
+   "c_compact": 294,
+   "c_search": 302,
+   "c_det": 466
+  },
+  {
+   "tool": "cap_0101",
+   "deep": true,
+   "c_full": 14065,
+   "c_compact": 294,
+   "c_search": 282,
+   "c_det": 679
+  },
+  {
+   "tool": "cap_0102",
+   "deep": false,
+   "c_full": 14067,
+   "c_compact": 294,
+   "c_search": 346,
+   "c_det": 1135
+  },
+  {
+   "tool": "cap_0103",
+   "deep": false,
+   "c_full": 14066,
+   "c_compact": 294,
+   "c_search": 342,
+   "c_det": 424
+  },
+  {
+   "tool": "cap_0104",
+   "deep": true,
+   "c_full": 14066,
+   "c_compact": 294,
+   "c_search": 283,
+   "c_det": 694
+  },
+  {
+   "tool": "cap_0105",
+   "deep": false,
+   "c_full": 14067,
+   "c_compact": 294,
+   "c_search": 361,
+   "c_det": 533
+  },
+  {
+   "tool": "cap_0106",
+   "deep": true,
+   "c_full": 14065,
+   "c_compact": 294,
+   "c_search": 281,
+   "c_det": 471
+  },
+  {
+   "tool": "cap_0107",
+   "deep": false,
+   "c_full": 14067,
+   "c_compact": 293,
+   "c_search": 371,
+   "c_det": 538
+  }
+ ],
+ "auc_full_inline_C": 120061,
+ "auc_compact_D": 52081,
+ "reduction": 0.5662,
+ "deep_fetches": 3,
+ "lossless_checks_pass": 8,
+ "lossless_checks_total": 8,
+ "token_heuristic": "len//4",
+ "full_bytes_per_call": 56256
+}

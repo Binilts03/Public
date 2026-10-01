@@ -7,6 +7,7 @@ at the gateway with requires_explicit_intent, independent of model behavior.
 Run: python harness/gateway/server.py  (stdio)
 Probe: python evals/gateway_probe.py
 """
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -192,6 +193,69 @@ def call_capability(tool_id: str, arguments: str = "{}") -> str:
     return json.dumps({"ok": True, "tool_id": tool_id, "dry_run": True,
                        "receipt": {"args_echo": args, "effect_class": t.get("effect_class")},
                        "model_view": f"Stub result for {t['name']}: no external effect committed."})
+
+
+# Arm D: deterministic result projection. Full payloads are synthetic but
+# realistically sized (seeded per tool id): N_ITEM rows of structured data.
+# Compact view is bounded (<=3 top items, snippets <=200 chars); the full
+# payload is addressable via result_handle. No LLM summarization anywhere.
+_RESULT_STORE: dict = {}
+_N_ITEMS = 200
+
+
+def _full_payload(tool_id: str, args: dict) -> dict:
+    import random
+    rng = random.Random(int(hashlib.sha256(tool_id.encode()).hexdigest(), 16) % (2 ** 32))
+    items = [{"id": f"msg_{k}", "author": f"user{rng.randrange(50)}",
+              "timestamp": f"2026-09-{rng.randrange(1, 29):02d}T{rng.randrange(24):02d}:00:00Z",
+              "snippet": f"Record {k} matching {tool_id} " + "lorem ipsum dolor sit amet " * 6}
+             for k in range(_N_ITEMS)]
+    return {"tool_id": tool_id, "args_echo": args, "matched_count": _N_ITEMS,
+            "items": items, "dry_run": True}
+
+
+@mcp.tool()
+def call_capability_compact(tool_id: str, arguments: str = "{}") -> str:
+    """Execute, compact view (Arm D): same authorization as call_capability, but the
+    model-visible payload is bounded; full data lives behind result_handle."""
+    _log("call_capability_compact", {"tool_id": tool_id, "arguments": arguments[:200]})
+    t = BY_ID.get(tool_id)
+    if not t:
+        return json.dumps({"ok": False, "error": "unknown_tool_id", "tool_id": tool_id})
+    if t.get("availability") == "disconnected":
+        return json.dumps({"ok": False, "error": "provider_unavailable", "tool_id": tool_id,
+                           "receipt": None, "dry_run": True})
+    if t.get("effect_class") == "high-risk/destructive":
+        return json.dumps({"ok": False, "error": "requires_explicit_intent", "tool_id": tool_id,
+                           "receipt": None, "dry_run": True})
+    try:
+        args = json.loads(arguments) if arguments else {}
+    except Exception:
+        return json.dumps({"ok": False, "error": "invalid_arguments_json", "tool_id": tool_id})
+    full = _full_payload(tool_id, args)
+    handle = "res_" + hashlib.sha256(json.dumps(full)[:512].encode()).hexdigest()[:12]
+    _RESULT_STORE[handle] = full
+    view = {"ok": True, "tool_id": tool_id, "dry_run": True,
+            "model_view": {"result_id": handle, "matched_count": full["matched_count"],
+                           "top_items": [{**it, "snippet": it["snippet"][:200]} for it in full["items"][:3]]},
+            "full_result": {"result_handle": handle,
+                            "uri": f"cap-result://{handle}/full",
+                            "bytes": len(json.dumps(full))},
+            "full_digest": "sha256:" + hashlib.sha256(json.dumps(full, sort_keys=True).encode()).hexdigest()}
+    return json.dumps(view)
+
+
+@mcp.tool()
+def get_full_result(result_handle: str, max_items: int = 200) -> str:
+    """Demand-load full result rows behind a compact-view handle (lossless)."""
+    _log("get_full_result", {"handle": result_handle, "max_items": max_items})
+    full = _RESULT_STORE.get(result_handle)
+    if full is None:
+        return json.dumps({"ok": False, "error": "unknown_handle", "handle": result_handle})
+    out = dict(full)
+    out["items"] = out["items"][: max(1, min(_N_ITEMS, max_items))]
+    out["truncated"] = len(full["items"]) > len(out["items"])
+    return json.dumps({"ok": True, **out})
 
 
 if __name__ == "__main__":
