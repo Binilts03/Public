@@ -120,6 +120,58 @@ def get_tool_details(tool_id: str) -> str:
 
 
 @mcp.tool()
+def prefetch(context: str, effect_budget: str = "external_read",
+             max_prefetch: int = 3) -> str:
+    """Working-set prefetch (Arm C pilot): high-precision out-of-band selection.
+
+    Emits 0-N tool refs only at confidence >= 0.65 (operating point: 0.90 coverage,
+    0.00 negative-emit, 0.017 misdirect on paired eval). Otherwise abstains with a
+    reason and names the demand-loaded fallback. Destructive tools are NEVER
+    prefetched (hard rule, independent of budget). Writes need explicit budget.
+    effect_budget: comma-separated subset of external_read,reversible_write.
+    """
+    import numpy as np
+    try:
+        E, IDS, M = _v2_index()
+    except RuntimeError as e:
+        return json.dumps({"prefetched": [], "abstained": True,
+                           "reason": "v2_index_unavailable", "fallback": "search_tools_v2"})
+    budget = {b.strip() for b in effect_budget.split(",") if b.strip()}
+    q = M.encode([context], normalize_embeddings=True)[0].astype("float32")
+    cos = E @ q
+    qtoks = set(re.findall(r"[a-z]+", context.lower()))
+    scored = []
+    for i, t in enumerate(CORPUS):
+        ec = t.get("effect_class")
+        if ec == "high-risk/destructive":
+            continue  # hard rule: never prefetch
+        if t.get("availability") == "disconnected":
+            continue
+        if ec == "reversible-write" and "reversible_write" not in budget:
+            continue
+        if ec not in ("external-read", "reversible-write"):
+            continue  # native-decoy and anything unclassified: never prefetch
+        blob = (t.get("match_text") or t.get("description") or "").lower()
+        lex = len(qtoks & set(re.findall(r"[a-z]+", blob))) / max(1, len(qtoks))
+        s = 0.7 * float(cos[i]) + 0.3 * lex - _RISK_PENALTY.get(ec, 0.3)
+        scored.append((s, t))
+    scored.sort(key=lambda x: -x[0])
+    out = [{"id": t["id"], "name": t["name"], "effect_class": t.get("effect_class"),
+            "score": round(s, 4)} for s, t in scored[: max(0, min(5, max_prefetch))]
+           if s >= 0.65]
+    if not out:
+        top_s = round(scored[0][0], 4) if scored else 0.0
+        res = {"prefetched": [], "abstained": True,
+               "reason": "no_candidate_above_threshold" if top_s < 0.65 else "budget_excludes_all",
+               "top_score": top_s, "fallback": "search_tools_v2"}
+    else:
+        res = {"prefetched": out, "abstained": False, "reason": "high_confidence_match",
+               "fallback": "search_tools_v2"}
+    _log("prefetch", {"context": context[:200], "budget": sorted(budget), "result": res})
+    return json.dumps(res)
+
+
+@mcp.tool()
 def call_capability(tool_id: str, arguments: str = "{}") -> str:
     """Execute (STUB): dry-run receipt only. Refuses high-risk and disconnected tools."""
     _log("call_capability", {"tool_id": tool_id, "arguments": arguments[:500]})
