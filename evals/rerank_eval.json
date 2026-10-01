@@ -1,0 +1,11 @@
+{
+ "n": 100,
+ "recall@1_v2": 0.94,
+ "recall@1_ce": 0.88,
+ "recall@3_v2": 0.96,
+ "recall@3_ce": 0.98,
+ "hr_top5_v2": 0.08,
+ "hr_top5_ce": 0.09,
+ "rerank_latency_p50_s": 0.047,
+ "verdict": "rerank adopted only if recall@1_ce - recall@1_v2 >= 0.10 at hr_top5_ce <= hr_top5_v2"
+}

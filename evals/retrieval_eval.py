@@ -1,11 +1,11 @@
-"""Paired Arm A (v1 lexical) vs Arm B (v2 hybrid+risk) retrieval eval — offline, deterministic.
+"""Paired v1/v2/v3 retrieval eval — offline, deterministic.
 
 Design (no gold-label mapping needed):
-- Known-item: sample 100 connected tools (70 read / 20 write / 10 high-risk, seed 7).
+- Known-item: sample 300 connected tools (210 read / 60 write / 30 high-risk, seed 7).
   Two query formulations per gold: DESC (its description) and USE (its when_to_use/tags).
-  Metrics: Recall@1/3/5, MRR, high-risk-in-top5 rate (exposure).
-- Negatives: 20 no-tool queries (native math, chitchat, unknown gibberish).
-  Metric: top-1 score distribution under v2 (abstention calibration input).
+  Metrics per arm (v1 lexical / v2 hybrid+risk / v3 entity bonus, bare state):
+  Recall@1/3/5, MRR, high-risk-in-top5 rate (exposure).
+- Negatives: 50 no-tool queries. Metric: top-1 score distributions (abstention input).
 
 Calls the real gateway over MCP (same code path as harnesses).
 Run: python evals/retrieval_eval.py
@@ -30,6 +30,15 @@ NEGATIVES = [
     "Is it raining in London?", "Tell me a joke about databases",
     "How many days in February?", "Sort these numbers: 3 1 2",
     "What colour is the sky?", "Ping localhost", "Echo hello world",
+    "Open the pod bay doors", "Remind me to water plants", "What is my IP?",
+    "Check disk usage", "Kill process 1234", "Restart the router",
+    "Who won the match yesterday?", "Translate hello to Spanish",
+    "What is 2+2*2?", "Spell accommodation", "Define entropy",
+    "How old is the universe?", "Where is Timbuktu?", "Play some music",
+    "Set an alarm for 7am", "What is on my calendar", "Take a screenshot",
+    "Compress this folder", "Rename file A to B", "What is localhost?",
+    "Show running processes", "Check battery level", "What is my hostname?",
+    "Who am I logged in as?", "Print working directory", "Clear the screen",
 ]
 
 
@@ -45,7 +54,7 @@ async def main():
     reads = [t for t in pool if t["effect_class"] == "external-read"]
     writes = [t for t in pool if t["effect_class"] == "reversible-write"]
     risks = [t for t in pool if t["effect_class"] == "high-risk/destructive"]
-    golds = (random.sample(reads, 70) + random.sample(writes, 20) + random.sample(risks, 10))
+    golds = (random.sample(reads, 210) + random.sample(writes, 60) + random.sample(risks, 30))
     by_id = {t["id"]: t for t in corpus}
 
     params = StdioServerParameters(command="python", args=[str(ROOT / "harness" / "gateway" / "server.py")])
@@ -58,19 +67,27 @@ async def main():
                 for kind, q in (("desc", g["description"][:500]), ("use", use_q[:500])):
                     r1 = json.loads((await s.call_tool("search_tools", {"query": q, "max_results": 5})).content[0].text)
                     r2 = json.loads((await s.call_tool("search_tools_v2", {"query": q, "max_results": 5})).content[0].text)
+                    r3 = json.loads((await s.call_tool("search_tools_v3", {"query": q, "trusted_state": "{}", "max_results": 5})).content[0].text)
                     ids1 = [h["id"] for h in r1]
                     ids2 = [o["id"] for o in r2["results"]]
+                    ids3 = [o["id"] for o in r3["results"]]
                     rank1 = ids1.index(g["id"]) + 1 if g["id"] in ids1 else None
                     rank2 = ids2.index(g["id"]) + 1 if g["id"] in ids2 else None
+                    rank3 = ids3.index(g["id"]) + 1 if g["id"] in ids3 else None
                     hr1 = sum(1 for i in ids1 if by_id[i]["effect_class"] == "high-risk/destructive")
                     hr2 = sum(1 for i in ids2 if by_id[i]["effect_class"] == "high-risk/destructive")
+                    hr3 = sum(1 for i in ids3 if by_id[i]["effect_class"] == "high-risk/destructive")
                     rows.append({"gold": g["id"], "class": g["effect_class"], "kind": kind,
-                                 "rank_v1": rank1, "rank_v2": rank2, "hr_v1": hr1, "hr_v2": hr2,
-                                 "top1_v2": r2["results"][0]["score"] if r2["results"] else 0})
-            neg_scores = []
+                                 "rank_v1": rank1, "rank_v2": rank2, "rank_v3": rank3,
+                                 "hr_v1": hr1, "hr_v2": hr2, "hr_v3": hr3,
+                                 "top1_v2": r2["results"][0]["score"] if r2["results"] else 0,
+                                 "top1_v3": r3["results"][0]["score"] if r3["results"] else 0})
+            neg_scores, neg_scores_v3 = [], []
             for q in NEGATIVES:
                 r2 = json.loads((await s.call_tool("search_tools_v2", {"query": q, "max_results": 5})).content[0].text)
                 neg_scores.append(r2["results"][0]["score"] if r2["results"] else 0)
+                r3 = json.loads((await s.call_tool("search_tools_v3", {"query": q, "trusted_state": "{}", "max_results": 5})).content[0].text)
+                neg_scores_v3.append(r3["results"][0]["score"] if r3["results"] else 0)
 
     def agg(kind):
         sub = [x for x in rows if x["kind"] == kind]
@@ -78,20 +95,27 @@ async def main():
         for k in (1, 3, 5):
             m[f"recall@{k}_v1"] = round(sum(recall_at(x["rank_v1"], k) for x in sub) / len(sub), 4)
             m[f"recall@{k}_v2"] = round(sum(recall_at(x["rank_v2"], k) for x in sub) / len(sub), 4)
+            m[f"recall@{k}_v3"] = round(sum(recall_at(x["rank_v3"], k) for x in sub) / len(sub), 4)
         rr1 = [1 / x["rank_v1"] for x in sub if x["rank_v1"]]
         rr2 = [1 / x["rank_v2"] for x in sub if x["rank_v2"]]
+        rr3 = [1 / x["rank_v3"] for x in sub if x["rank_v3"]]
         m["mrr_v1"] = round(sum(rr1) / len(sub), 4)
         m["mrr_v2"] = round(sum(rr2) / len(sub), 4)
+        m["mrr_v3"] = round(sum(rr3) / len(sub), 4)
         m["hr_top5_rate_v1"] = round(sum(1 for x in sub if x["hr_v1"] > 0) / len(sub), 4)
         m["hr_top5_rate_v2"] = round(sum(1 for x in sub if x["hr_v2"] > 0) / len(sub), 4)
+        m["hr_top5_rate_v3"] = round(sum(1 for x in sub if x["hr_v3"] > 0) / len(sub), 4)
         m["n"] = len(sub)
         return m
 
     out = {"desc_queries": agg("desc"), "use_queries": agg("use"),
            "neg_top1_v2": {"mean": round(statistics.mean(neg_scores), 4),
-                           "max": round(max(neg_scores), 4),
-                           "scores": [round(x, 4) for x in neg_scores]},
+                           "max": round(max(neg_scores), 4)},
+           "neg_top1_v3": {"mean": round(statistics.mean(neg_scores_v3), 4),
+                           "max": round(max(neg_scores_v3), 4)},
            "pos_top1_v2_mean": round(statistics.mean([r["top1_v2"] for r in rows]), 4),
+           "pos_top1_v3_mean": round(statistics.mean([r["top1_v3"] for r in rows]), 4),
+           "n_neg": len(neg_scores),
            "rows": rows}
     json.dump(out, open(ROOT / "evals" / "retrieval_eval.json", "w"), indent=1)
     print(json.dumps({k: v for k, v in out.items() if k != "rows"}, indent=1))
