@@ -2,10 +2,10 @@
   "n_core_target": 1000,
   "n_total": 1000,
   "counts": {
-    "external-read": 716,
-    "reversible-write": 57,
+    "external-read": 699,
+    "reversible-write": 74,
     "high-risk/destructive": 127,
     "native-decoy": 100
   },
-  "global_digest": "sha256:ec4ef6d7eda65a543cca5c874cea7449b1c7bfe1c4bedbcee928572e20b1cdb7"
+  "global_digest": "sha256:21832a17de77226faf7520ea26f73b547f9a22ebad44cf6914f4e4a8db3a3cdd"
 }

@@ -1,0 +1,13 @@
+{"event": "search_tools_v2", "query": "dep_892", "max_results": 10, "top": ["cap_0798", "cap_0375", "cap_0799", "cap_0377", "cap_0431", "cap_0403", "cap_0337", "cap_0486", "cap_0467", "cap_0235"]}
+{"event": "search_tools_v2", "query": "git", "max_results": 10, "top": ["cap_0578", "cap_0579", "cap_0494", "cap_0281", "cap_0581", "cap_0211", "cap_0713", "cap_0751", "cap_0129", "cap_0595"]}
+{"event": "search_tools_v2", "query": "git status", "max_results": 10, "top": ["cap_0378", "cap_0299", "cap_0486", "cap_0464", "cap_0450", "cap_0794", "cap_0365", "cap_0292", "cap_0369", "cap_0243"]}
+{"event": "search_tools_v2", "query": "git", "max_results": 10, "top": ["cap_0578", "cap_0579", "cap_0494", "cap_0281", "cap_0581", "cap_0211", "cap_0713", "cap_0751", "cap_0129", "cap_0595"]}
+{"event": "search_tools_v2", "query": "gmail", "max_results": 10, "top": ["cap_0622", "cap_0629", "cap_0630", "cap_0654", "cap_0791", "cap_0277", "cap_0328", "cap_0321", "cap_0716", "cap_0477"]}
+{"event": "search_tools_v2", "query": "SAP orders query", "max_results": 5, "top": ["cap_0380", "cap_0361", "cap_0376", "cap_0333", "cap_0428"]}
+{"event": "get_tool_details", "tool_id": "cap_0376"}
+{"event": "get_tool_details", "tool_id": "cap_0380"}
+{"event": "get_tool_details", "tool_id": "cap_0361"}
+{"event": "get_tool_details", "tool_id": "cap_0333"}
+{"event": "search_tools_v2", "query": "Sentry", "max_results": 10, "top": ["cap_0277", "cap_0404", "cap_0156", "cap_0578", "cap_0363", "cap_0219", "cap_0192", "cap_0522", "cap_0523", "cap_0508"]}
+{"event": "search_tools_v2", "query": "git", "max_results": 10, "top": ["cap_0578", "cap_0579", "cap_0494", "cap_0281", "cap_0581", "cap_0211", "cap_0713", "cap_0751", "cap_0129", "cap_0595"]}
+{"event": "search_tools_v2", "query": "gh", "max_results": 10, "top": ["cap_0578", "cap_0579", "cap_0566", "cap_0570", "cap_0297", "cap_0621", "cap_0211", "cap_0176", "cap_0555", "cap_0348"]}

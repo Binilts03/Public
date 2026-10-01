@@ -32,18 +32,40 @@ def normalize(i, raw_doc: str, meta: dict):
         d = json.loads(raw_doc) if isinstance(raw_doc, str) and raw_doc.strip().startswith("{") else {}
     except Exception:
         d = {}
+    prof = d.get("tool_profile", {}) or {}
     name = d.get("name") or meta.get("id") or f"tool_{i:04d}"
-    desc = d.get("function_description") or d.get("description") or (raw_doc[:500] if isinstance(raw_doc, str) else str(raw_doc)[:500])
+    desc = d.get("description") or d.get("functionality") or d.get("function_description") or ""
+    if not desc and isinstance(raw_doc, str):
+        desc = raw_doc[:500]
+    when = ([prof.get("function")] if prof.get("function") else []) + ([d.get("functionality")] if d.get("functionality") else [])
+    tags = prof.get("tags") or d.get("tags", [])
+    domain = d.get("domain")
+    if domain:
+        tags = list(tags) + [domain]
+    # input_schema from doc_arguments/parameters ({type object, properties}) when present
+    schema = {"type": "object"}
+    params = d.get("doc_arguments") or d.get("parameters")
+    if isinstance(params, dict) and params.get("type") == "object":
+        schema = {"type": "object", "properties": params.get("properties", {})}
+    elif isinstance(params, list):
+        props = {}
+        for p in params:
+            if isinstance(p, dict) and p.get("name"):
+                props[str(p["name"])] = {"type": "string", "description": str(p.get("description", ""))[:200]}
+        if props:
+            schema = {"type": "object", "properties": props}
+    match_text = " ".join([str(name), str(desc), " ".join(when), " ".join(tags), str(domain or "")])
     tool = {
         "id": f"cap_{i:04d}",
         "name": str(name)[:128].strip().replace(" ", ".").lower() or f"tool.{i}",
-        "description": desc[:2000],
-        "when_to_use": d.get("when_to_use", []),
+        "description": str(desc)[:2000],
+        "when_to_use": [str(w)[:500] for w in when][:3],
         "limitations": d.get("limitations", []),
-        "tags": d.get("tags", []),
-        "effect_class": effect_heuristic(desc + " " + str(name)),
-        "input_schema": d.get("input_schema", {"type": "object"}),
+        "tags": [str(t)[:80] for t in tags][:8],
+        "effect_class": effect_heuristic(match_text),
+        "input_schema": schema,
         "source": "tool-rex-tools",
+        "match_text": match_text[:3000],
     }
     tool["digest"] = digest({k: tool[k] for k in sorted(tool) if k != "digest"})
     return tool
