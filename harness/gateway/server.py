@@ -140,6 +140,36 @@ def _provider_hits(text: str) -> set:
     return {p for p, kws in _PROVIDER_LEXICON.items() if any(k in t for k in kws)}
 
 
+def _rank(query: str, providers: set, has_ids: bool):
+    """Shared v3 scoring (single source of truth for search_tools_v3/prefetch).
+
+    Returns (scored, unavail): scored is [(score, tool)] desc over connected
+    tools, unavail is lexically matching disconnected ids. Raises RuntimeError
+    when the dense index is unavailable; callers map that to tool errors.
+    """
+    E, _IDS, M = _v2_index()
+    q = M.encode([query], normalize_embeddings=True)[0].astype("float32")
+    cos = E @ q
+    qtoks = set(re.findall(r"[a-z]+", query.lower()))
+    scored, unavail = [], []
+    for i, t in enumerate(CORPUS):
+        if t.get("availability") == "disconnected":
+            if _score(query, t) > 0:
+                unavail.append(t["id"])
+            continue
+        blob = (t.get("match_text") or t.get("description") or "").lower()
+        lex = len(qtoks & set(re.findall(r"[a-z]+", blob))) / max(1, len(qtoks))
+        pen = _RISK_PENALTY.get(t.get("effect_class"), 0.3)
+        bonus = 0.30 if (providers & _provider_hits(t.get("match_text") or "")) else 0.0
+        if bonus and has_ids:
+            props = str((t.get("input_schema") or {}).get("properties", {}).keys()).lower()
+            if any(k in props for k in ("id", "sha", "repo", "deployment", "message")):
+                bonus += 0.10
+        scored.append((0.7 * float(cos[i]) + 0.3 * lex - pen + bonus, t))
+    scored.sort(key=lambda x: -x[0])
+    return scored, unavail
+
+
 @mcp.tool()
 def search_tools_v3(query: str, trusted_state: str = "{}",
                     max_results: int = 5) -> str:
@@ -161,27 +191,7 @@ def search_tools_v3(query: str, trusted_state: str = "{}",
         return json.dumps({"error": "invalid_trusted_state", "fallback": "search_tools_v2"})
     trusted_providers = set(state.get("providers", [])) | _provider_hits(query)
     has_ids = bool(state.get("object_ids"))
-    q = M.encode([query], normalize_embeddings=True)[0].astype("float32")
-    cos = E @ q
-    qtoks = set(re.findall(r"[a-z]+", query.lower()))
-    scored, unavail = [], []
-    for i, t in enumerate(CORPUS):
-        if t.get("availability") == "disconnected":
-            if _score(query, t) > 0:
-                unavail.append(t["id"])
-            continue
-        blob = (t.get("match_text") or t.get("description") or "").lower()
-        lex = len(qtoks & set(re.findall(r"[a-z]+", blob))) / max(1, len(qtoks))
-        pen = _RISK_PENALTY.get(t.get("effect_class"), 0.3)
-        tool_providers = _provider_hits(t.get("match_text") or "")
-        bonus = 0.30 if (trusted_providers & tool_providers) else 0.0
-        if bonus and has_ids:
-            props = str((t.get("input_schema") or {}).get("properties", {}).keys()).lower()
-            if any(k in props for k in ("id", "sha", "repo", "deployment", "message")):
-                bonus += 0.10
-        s = 0.7 * float(cos[i]) + 0.3 * lex - pen + bonus
-        scored.append((s, t))
-    scored.sort(key=lambda x: -x[0])
+    scored, unavail = _rank(query, trusted_providers, has_ids)
     k = max(1, min(20, max_results))
     out = [{"id": t["id"], "name": t["name"], "effect_class": t.get("effect_class"),
             "availability": "connected", "digest": t.get("digest"), "score": round(s, 4)}
@@ -230,11 +240,12 @@ def prefetch(context: str, effect_budget: str = "external_read",
     # Prefetch therefore equals v3-top1 above tau plus budget and hard rules.
     trusted_providers = set(state.get("providers", [])) | _provider_hits(context)
     has_ids = bool(state.get("object_ids"))
-    q = M.encode([context], normalize_embeddings=True)[0].astype("float32")
-    cos = E @ q
-    qtoks = set(re.findall(r"[a-z]+", context.lower()))
+    try:
+        ranked, _unavail = _rank(context, trusted_providers, has_ids)
+    except RuntimeError:
+        ranked = []
     scored = []
-    for i, t in enumerate(CORPUS):
+    for s, t in ranked:
         ec = t.get("effect_class")
         if ec == "high-risk/destructive":
             continue  # hard rule: never prefetch
@@ -244,17 +255,7 @@ def prefetch(context: str, effect_budget: str = "external_read",
             continue
         if ec not in ("external-read", "reversible-write"):
             continue  # native-decoy and anything unclassified: never prefetch
-        blob = (t.get("match_text") or t.get("description") or "").lower()
-        lex = len(qtoks & set(re.findall(r"[a-z]+", blob))) / max(1, len(qtoks))
-        s = 0.7 * float(cos[i]) + 0.3 * lex - _RISK_PENALTY.get(ec, 0.3)
-        if trusted_providers & _provider_hits(t.get("match_text") or ""):
-            s += 0.30
-            if has_ids:
-                props = str((t.get("input_schema") or {}).get("properties", {}).keys()).lower()
-                if any(k in props for k in ("id", "sha", "repo", "deployment", "message")):
-                    s += 0.10
         scored.append((s, t))
-    scored.sort(key=lambda x: -x[0])
     out = [{"id": t["id"], "name": t["name"], "effect_class": t.get("effect_class"),
             "score": round(s, 4)} for s, t in scored[: max(0, min(5, max_prefetch))]
            if s >= 0.65]
