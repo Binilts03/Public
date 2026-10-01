@@ -120,10 +120,90 @@ def get_tool_details(tool_id: str) -> str:
     return json.dumps(t)
 
 
+# H3 entity-aware retrieval: turn text PLUS harness-supplied trusted state
+# (connected providers, known object ids). Raw external content never enters here.
+_PROVIDER_LEXICON = {
+    "mail": ["gmail", "mailbox", "mail", "email", "inbox", "message"],
+    "repo": ["github", "repo", "repository", "pr", "commit", "issue", "git"],
+    "observability": ["sentry", "deploy", "deployment", "release", "logs", "error"],
+    "chat": ["slack", "channel", "message"],
+    "billing": ["stripe", "invoice", "pay", "payment", "bill"],
+    "tickets": ["jira", "ticket"],
+    "data": ["database", "sql", "table", "query", "sap", "orders"],
+    "files": ["file", "directory", "git status"],
+    "media": ["image", "photo", "video"],
+}
+
+
+def _provider_hits(text: str) -> set:
+    t = " " + text.lower() + " "
+    return {p for p, kws in _PROVIDER_LEXICON.items() if any(k in t for k in kws)}
+
+
+@mcp.tool()
+def search_tools_v3(query: str, trusted_state: str = "{}",
+                    max_results: int = 5) -> str:
+    """Catalog v3 (H3 pilot): v2 base plus deterministic entity bonus.
+
+    trusted_state JSON: {"providers": [...], "object_ids": {...}} — harness facts
+    (connected systems, validated receipts), never raw external content.
+    Bonus +0.30 when the tool matches a trusted/auto provider; +0.10 more when
+    object_ids are present and the tool takes id-like arguments.
+    """
+    import numpy as np
+    try:
+        E, IDS, M = _v2_index()
+    except RuntimeError as e:
+        return json.dumps({"error": "v2_index_unavailable", "detail": str(e)[:200]})
+    try:
+        state = json.loads(trusted_state) if trusted_state else {}
+    except Exception:
+        return json.dumps({"error": "invalid_trusted_state", "fallback": "search_tools_v2"})
+    trusted_providers = set(state.get("providers", [])) | _provider_hits(query)
+    has_ids = bool(state.get("object_ids"))
+    q = M.encode([query], normalize_embeddings=True)[0].astype("float32")
+    cos = E @ q
+    qtoks = set(re.findall(r"[a-z]+", query.lower()))
+    scored, unavail = [], []
+    for i, t in enumerate(CORPUS):
+        if t.get("availability") == "disconnected":
+            if _score(query, t) > 0:
+                unavail.append(t["id"])
+            continue
+        blob = (t.get("match_text") or t.get("description") or "").lower()
+        lex = len(qtoks & set(re.findall(r"[a-z]+", blob))) / max(1, len(qtoks))
+        pen = _RISK_PENALTY.get(t.get("effect_class"), 0.3)
+        tool_providers = _provider_hits(t.get("match_text") or "")
+        bonus = 0.30 if (trusted_providers & tool_providers) else 0.0
+        if bonus and has_ids:
+            props = str((t.get("input_schema") or {}).get("properties", {}).keys()).lower()
+            if any(k in props for k in ("id", "sha", "repo", "deployment", "message")):
+                bonus += 0.10
+        s = 0.7 * float(cos[i]) + 0.3 * lex - pen + bonus
+        scored.append((s, t))
+    scored.sort(key=lambda x: -x[0])
+    k = max(1, min(20, max_results))
+    out = [{"id": t["id"], "name": t["name"], "effect_class": t.get("effect_class"),
+            "availability": "connected", "digest": t.get("digest"), "score": round(s, 4)}
+           for s, t in scored[:k]]
+    res = {"results": out, "unavailable": unavail[:2],
+           "providers_used": sorted(trusted_providers)}
+    _log("search_tools_v3", {"query": query[:200], "state": str(state)[:200],
+                             "top": [o["id"] for o in out]})
+    return json.dumps(res)
+
+
 @mcp.tool()
 def prefetch(context: str, effect_budget: str = "external_read",
-             max_prefetch: int = 3) -> str:
+             max_prefetch: int = 3, trusted_state: str = "{}") -> str:
     """Working-set prefetch (Arm C pilot): high-precision out-of-band selection.
+
+    Gate tau 0.65 over v3-style scoring (union provider bonus) plus budget and
+    hard rules (destructive never, disconnected never, decoys never).
+    Measured: bare short queries abstain 10/10; with entity matching, T01/T05
+    cross (2/6 coverage, 0 false) while T03/T04/T09/T10 abstain. trusted_state
+    adds object_ids bonus and explicit scoping; provider bonus alone is
+    turn-text computable (see evaluation note).
 
     Emits 0-N tool refs only at confidence >= 0.65 (operating point: 0.90 coverage,
     0.00 negative-emit, 0.017 misdirect on paired eval). Otherwise abstains with a
@@ -138,6 +218,18 @@ def prefetch(context: str, effect_budget: str = "external_read",
         return json.dumps({"prefetched": [], "abstained": True,
                            "reason": "v2_index_unavailable", "fallback": "search_tools_v2"})
     budget = {b.strip() for b in effect_budget.split(",") if b.strip()}
+    try:
+        state = json.loads(trusted_state) if trusted_state else {}
+    except Exception:
+        state = {}
+    # Bonus providers = attested state UNION query keywords (same as v3 ranking).
+    # Measured consequence: the bonus is computable from turn text alone, so
+    # attested-only gating adds nothing here (it abstained 10/10, including
+    # positives whose tools are billing-worded while state says mail: the
+    # harness cannot know the provider without solving retrieval first).
+    # Prefetch therefore equals v3-top1 above tau plus budget and hard rules.
+    trusted_providers = set(state.get("providers", [])) | _provider_hits(context)
+    has_ids = bool(state.get("object_ids"))
     q = M.encode([context], normalize_embeddings=True)[0].astype("float32")
     cos = E @ q
     qtoks = set(re.findall(r"[a-z]+", context.lower()))
@@ -155,6 +247,12 @@ def prefetch(context: str, effect_budget: str = "external_read",
         blob = (t.get("match_text") or t.get("description") or "").lower()
         lex = len(qtoks & set(re.findall(r"[a-z]+", blob))) / max(1, len(qtoks))
         s = 0.7 * float(cos[i]) + 0.3 * lex - _RISK_PENALTY.get(ec, 0.3)
+        if trusted_providers & _provider_hits(t.get("match_text") or ""):
+            s += 0.30
+            if has_ids:
+                props = str((t.get("input_schema") or {}).get("properties", {}).keys()).lower()
+                if any(k in props for k in ("id", "sha", "repo", "deployment", "message")):
+                    s += 0.10
         scored.append((s, t))
     scored.sort(key=lambda x: -x[0])
     out = [{"id": t["id"], "name": t["name"], "effect_class": t.get("effect_class"),
