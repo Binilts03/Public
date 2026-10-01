@@ -1,0 +1,8 @@
+{"event": "search_tools", "query": "gateway", "max_results": 10}
+{"event": "search_tools", "query": "deployment", "max_results": 20}
+{"event": "search_tools", "query": "gmail", "max_results": 10}
+{"event": "search_tools", "query": "SAP", "max_results": 10}
+{"event": "search_tools", "query": "sql", "max_results": 10}
+{"event": "search_tools", "query": "sap", "max_results": 10}
+{"event": "search_tools", "query": "executesqlquery", "max_results": 10}
+{"event": "get_tool_details", "tool_id": "cap_0766"}

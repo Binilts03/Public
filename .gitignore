@@ -3,3 +3,4 @@ node_modules/
 *.log
 test-results/
 __pycache__/
+gateway_calls.jsonl

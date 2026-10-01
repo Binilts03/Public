@@ -1,0 +1,2 @@
+{
+  "$schema": "https://opencode.ai/config.json","mcp": {"gateway": {"type": "local", "command": ["python", "C:\\Users\\Binil\\AppData\\Local\\Temp\\opencode\\Public-clean\\harness\\gateway\\server.py"], "enabled": true}}, "permission": {"gateway_*": "allow"}}
