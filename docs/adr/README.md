@@ -8,4 +8,5 @@
 | [0004](0004-harness-only-testing.md) | Harness-only testing via Ollama-backed harnesses, labeled | accepted | 2026-10-01 |
 | [0005](0005-entity-aware-partial-revival.md) | Entity-aware retrieval revives prefetch partially, not sufficiently | accepted | 2026-10-01 |
 | [0006](0006-kill-generic-reranker.md) | Kill generic-reranker H5 variant; long-horizon split decision | accepted | 2026-10-01 |
+| [0007](0007-single-harness-focus.md) | Single-harness focus on OpenCode until native baselines unblock | accepted | 2026-10-01 |
 |-----|-------|--------|------|
