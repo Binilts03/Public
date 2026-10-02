@@ -31,12 +31,11 @@ mcp = FastMCP("capability-gateway")
 
 # Arm B: hybrid dense+lexical index. Loaded in the MAIN thread at server startup:
 # torch/sentence-transformers must not be first-imported inside an MCP worker thread (Windows deadlock).
-_V2, _V2_IDS, _V2_MODEL, _V2_ERROR = None, None, None, None
+_V2, _V2_MODEL, _V2_ERROR = None, None, None
 try:
     import numpy as _np
     from sentence_transformers import SentenceTransformer as _ST
     _V2 = _np.load(ROOT / "harness" / "gateway" / "embeds.npy")
-    _V2_IDS = json.load(open(ROOT / "harness" / "gateway" / "embed_ids.json"))
     _V2_MODEL = _ST("all-MiniLM-L6-v2")
 except Exception as e:  # degraded: v2 errors, v1/search/call unaffected
     _V2_ERROR = str(e)
@@ -45,7 +44,7 @@ except Exception as e:  # degraded: v2 errors, v1/search/call unaffected
 def _v2_index():
     if _V2_ERROR is not None:
         raise RuntimeError(_V2_ERROR)
-    return _V2, _V2_IDS, _V2_MODEL
+    return _V2, _V2_MODEL
 
 
 _RISK_PENALTY = {"high-risk/destructive": 0.45, "reversible-write": 0.15,
@@ -56,9 +55,8 @@ _EXPLICIT_HARM = re.compile(r"\b(delete|destroy|drop|terminate|revoke|wipe|purge
 @mcp.tool()
 def search_tools_v2(query: str, max_results: int = 5) -> str:
     """Catalog v2 (Arm B): hybrid dense+lexical retrieval with risk-aware rerank. Disconnected tools reported separately, never ranked. Still demand-loaded, no prefetch."""
-    import numpy as np
     try:
-        E, IDS, M = _v2_index()
+        E, M = _v2_index()
     except RuntimeError as e:
         return json.dumps({"error": "v2_index_unavailable", "detail": str(e)[:200]})
     q = M.encode([query], normalize_embeddings=True)[0].astype("float32")
@@ -147,7 +145,7 @@ def _rank(query: str, providers: set, has_ids: bool):
     tools, unavail is lexically matching disconnected ids. Raises RuntimeError
     when the dense index is unavailable; callers map that to tool errors.
     """
-    E, _IDS, M = _v2_index()
+    E, M = _v2_index()
     q = M.encode([query], normalize_embeddings=True)[0].astype("float32")
     cos = E @ q
     qtoks = set(re.findall(r"[a-z]+", query.lower()))
@@ -180,18 +178,16 @@ def search_tools_v3(query: str, trusted_state: str = "{}",
     Bonus +0.30 when the tool matches a trusted/auto provider; +0.10 more when
     object_ids are present and the tool takes id-like arguments.
     """
-    import numpy as np
-    try:
-        E, IDS, M = _v2_index()
-    except RuntimeError as e:
-        return json.dumps({"error": "v2_index_unavailable", "detail": str(e)[:200]})
     try:
         state = json.loads(trusted_state) if trusted_state else {}
     except Exception:
         return json.dumps({"error": "invalid_trusted_state", "fallback": "search_tools_v2"})
     trusted_providers = set(state.get("providers", [])) | _provider_hits(query)
     has_ids = bool(state.get("object_ids"))
-    scored, unavail = _rank(query, trusted_providers, has_ids)
+    try:
+        scored, unavail = _rank(query, trusted_providers, has_ids)
+    except RuntimeError as e:
+        return json.dumps({"error": "v2_index_unavailable", "detail": str(e)[:200]})
     k = max(1, min(20, max_results))
     out = [{"id": t["id"], "name": t["name"], "effect_class": t.get("effect_class"),
             "availability": "connected", "digest": t.get("digest"), "score": round(s, 4)}
@@ -221,12 +217,6 @@ def prefetch(context: str, effect_budget: str = "external_read",
     prefetched (hard rule, independent of budget). Writes need explicit budget.
     effect_budget: comma-separated subset of external_read,reversible_write.
     """
-    import numpy as np
-    try:
-        E, IDS, M = _v2_index()
-    except RuntimeError as e:
-        return json.dumps({"prefetched": [], "abstained": True,
-                           "reason": "v2_index_unavailable", "fallback": "search_tools_v2"})
     budget = {b.strip() for b in effect_budget.split(",") if b.strip()}
     try:
         state = json.loads(trusted_state) if trusted_state else {}
