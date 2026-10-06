@@ -15,6 +15,7 @@ import asyncio
 import hashlib
 import json
 import random
+import re
 import sys
 from pathlib import Path
 
@@ -32,6 +33,7 @@ async def main():
     random.seed(11)
     params = StdioServerParameters(command=sys.executable, args=[str(ROOT / "harness" / "gateway" / "server.py")])
     steps, auc_c, auc_d, fetches, checks = [], 0, 0, 0, []
+    tail_flags, no_signal, covered = [], 0, 0
     async with stdio_client(params) as (r, w):
         async with ClientSession(r, w) as s:
             await s.initialize()
@@ -44,14 +46,34 @@ async def main():
                 v = json.loads(r3)
                 full = json.loads((await s.call_tool("get_full_result",
                     {"result_handle": v["model_view"]["result_id"], "max_items": 200})).content[0].text)
-                # lossless checks: digest match, prefix exactness
+                # lossless checks: digest match, prefix exactness (+snippet prefix)
                 dg = "sha256:" + hashlib.sha256(json.dumps(
                     {k: full[k] for k in ("tool_id", "args_echo", "matched_count", "items", "dry_run")},
                     sort_keys=True).encode()).hexdigest()
-                checks.append(dg == v["full_digest"] and
-                              [i["id"] for i in v["model_view"]["top_items"]] ==
-                              [i["id"] for i in full["items"][:3]] and
-                              all(len(i["snippet"]) <= 200 for i in v["model_view"]["top_items"]))
+                top = v["model_view"]["top_items"]
+                prefix_ok = (
+                    [i["id"] for i in top] ==
+                    [i["id"] for i in full["items"][:3]]
+                    and all(t["snippet"] == f["snippet"][:200]
+                            for t, f in zip(top, full["items"][:3]))
+                    and all(len(i["snippet"]) <= 200 for i in top))
+                checks.append(dg == v["full_digest"] and prefix_ok)
+                # D-loss (decisiveness) audit: does compact top-3 hide query-relevant rows?
+                # tail_only = query tokens hit ONLY in items[3:] (top-3 hides the signal).
+                # With current synthetic lorem-ipsum payloads expect no_signal everywhere:
+                # byte-lossless (8/8) does NOT imply decision-lossless.
+                qtoks = set(re.findall(r"[a-z]+", q.lower())) - {"records"}
+                top_blob = " ".join(i["snippet"] for i in top).lower()
+                tail_blob = " ".join(i["snippet"] for i in full["items"][3:]).lower()
+                hits_top = len(qtoks & set(re.findall(r"[a-z]+", top_blob)))
+                hits_tail = len(qtoks & set(re.findall(r"[a-z]+", tail_blob)))
+                tail_only = hits_top == 0 and hits_tail > 0
+                if tail_only:
+                    tail_flags.append(t["id"])
+                if hits_top == 0 and hits_tail == 0:
+                    no_signal += 1
+                else:
+                    covered += hits_top > 0
                 deep = idx in (1, 4, 6)  # 3 deep-scan steps fetch full rows
                 c_full, c_compact = TOKS(json.dumps(full)), TOKS(r3)
                 c_search, c_det = TOKS(r1), TOKS(r2)
@@ -59,7 +81,9 @@ async def main():
                 auc_d += c_search + c_det + c_compact + (c_full if deep else 0)
                 fetches += 1 if deep else 0
                 steps.append({"tool": t["id"], "deep": deep, "c_full": c_full,
-                              "c_compact": c_compact, "c_search": c_search, "c_det": c_det})
+                              "c_compact": c_compact, "c_search": c_search, "c_det": c_det,
+                              "tail_only_risk": tail_only, "q_hits_top": hits_top,
+                              "q_hits_tail": hits_tail})
             # step 25: destructive refusal (small both arms)
             r4 = (await s.call_tool("call_capability_compact",
                 {"tool_id": "cap_0000", "arguments": "{}"})).content[0].text
@@ -68,6 +92,9 @@ async def main():
     out = {"steps": steps, "auc_full_inline_C": auc_c, "auc_compact_D": auc_d,
            "reduction": round(1 - auc_d / auc_c, 4), "deep_fetches": fetches,
            "lossless_checks_pass": sum(checks), "lossless_checks_total": len(checks),
+           "decisiveness_tail_only_flags": tail_flags,
+           "decisiveness_no_signal_steps": no_signal,
+           "decisiveness_covered_steps": covered,
            "token_heuristic": "len//4", "full_bytes_per_call": steps[0]["c_full"] * 4 if steps else 0}
     json.dump(out, open(ROOT / "evals" / "result_auc.json", "w"), indent=1)
     print(json.dumps({k: v for k, v in out.items() if k != "steps"}, indent=1))

@@ -6,7 +6,10 @@
    "c_full": 14064,
    "c_compact": 294,
    "c_search": 302,
-   "c_det": 466
+   "c_det": 466,
+   "tail_only_risk": false,
+   "q_hits_top": 0,
+   "q_hits_tail": 0
   },
   {
    "tool": "cap_0101",
@@ -14,7 +17,10 @@
    "c_full": 14065,
    "c_compact": 294,
    "c_search": 282,
-   "c_det": 679
+   "c_det": 679,
+   "tail_only_risk": false,
+   "q_hits_top": 0,
+   "q_hits_tail": 0
   },
   {
    "tool": "cap_0102",
@@ -22,7 +28,10 @@
    "c_full": 14067,
    "c_compact": 294,
    "c_search": 346,
-   "c_det": 1135
+   "c_det": 1135,
+   "tail_only_risk": false,
+   "q_hits_top": 0,
+   "q_hits_tail": 0
   },
   {
    "tool": "cap_0103",
@@ -30,7 +39,10 @@
    "c_full": 14066,
    "c_compact": 294,
    "c_search": 342,
-   "c_det": 424
+   "c_det": 424,
+   "tail_only_risk": false,
+   "q_hits_top": 0,
+   "q_hits_tail": 0
   },
   {
    "tool": "cap_0104",
@@ -38,7 +50,10 @@
    "c_full": 14066,
    "c_compact": 294,
    "c_search": 283,
-   "c_det": 694
+   "c_det": 694,
+   "tail_only_risk": false,
+   "q_hits_top": 0,
+   "q_hits_tail": 0
   },
   {
    "tool": "cap_0105",
@@ -46,7 +61,10 @@
    "c_full": 14067,
    "c_compact": 294,
    "c_search": 361,
-   "c_det": 533
+   "c_det": 533,
+   "tail_only_risk": false,
+   "q_hits_top": 0,
+   "q_hits_tail": 0
   },
   {
    "tool": "cap_0106",
@@ -54,7 +72,10 @@
    "c_full": 14065,
    "c_compact": 294,
    "c_search": 281,
-   "c_det": 471
+   "c_det": 471,
+   "tail_only_risk": false,
+   "q_hits_top": 0,
+   "q_hits_tail": 0
   },
   {
    "tool": "cap_0107",
@@ -62,7 +83,10 @@
    "c_full": 14067,
    "c_compact": 293,
    "c_search": 371,
-   "c_det": 538
+   "c_det": 538,
+   "tail_only_risk": false,
+   "q_hits_top": 0,
+   "q_hits_tail": 0
   }
  ],
  "auc_full_inline_C": 120061,
@@ -71,6 +95,9 @@
  "deep_fetches": 3,
  "lossless_checks_pass": 8,
  "lossless_checks_total": 8,
+ "decisiveness_tail_only_flags": [],
+ "decisiveness_no_signal_steps": 8,
+ "decisiveness_covered_steps": 0,
  "token_heuristic": "len//4",
  "full_bytes_per_call": 56256
 }

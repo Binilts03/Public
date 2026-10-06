@@ -9,4 +9,5 @@
 | [0005](0005-entity-aware-partial-revival.md) | Entity-aware retrieval revives prefetch partially, not sufficiently | accepted | 2026-10-01 |
 | [0006](0006-kill-generic-reranker.md) | Kill generic-reranker H5 variant; long-horizon split decision | accepted | 2026-10-01 |
 | [0007](0007-single-harness-focus.md) | Single-harness focus on OpenCode until native baselines unblock | accepted | 2026-10-01 |
+| [0008](0008-paired-e2e-and-mcp-timeout.md) | Paired A/B end-to-end result and MCP cold-start timeout fix | accepted | 2026-10-06 |
 |-----|-------|--------|------|

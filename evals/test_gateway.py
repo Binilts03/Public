@@ -7,6 +7,7 @@ Run: python evals/test_gateway.py  (exit 0 = green)
 import asyncio
 import hashlib
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -60,6 +61,29 @@ async def main():
             dg = "sha256:" + hashlib.sha256(json.dumps(
                 {k: f[k] for k in ("tool_id", "args_echo", "matched_count", "items", "dry_run")}, sort_keys=True).encode()).hexdigest()
             check("compact-lossless", dg == c["full_digest"] and len(c["model_view"]["top_items"]) == 3)
+
+            u = json.loads((await s.call_tool("get_full_result", {"result_handle": "res_000000000000", "max_items": 200})).content[0].text)
+            check("unknown-handle", u.get("error") == "unknown_handle", u.get("error"))
+
+    # P0.3 lifecycle at the MCP seam: short-TTL/small-cap server (TTL=0 forces
+    # expiry after a short sleep; MAX=3 forces oldest-first eviction).
+    env = {**os.environ, "CAP_RESULT_TTL_S": "0", "CAP_RESULT_MAX": "3"}
+    p2 = StdioServerParameters(command=sys.executable, args=[str(ROOT / "harness" / "gateway" / "server.py")], env=env)
+    async with stdio_client(p2) as (r2, w2):
+        async with ClientSession(r2, w2) as s2:
+            await s2.initialize()
+            c0 = json.loads((await s2.call_tool("call_capability_compact", {"tool_id": "cap_0361", "arguments": '{"n": 0}'})).content[0].text)
+            await asyncio.sleep(0.3)
+            e0 = json.loads((await s2.call_tool("get_full_result", {"result_handle": c0["model_view"]["result_id"], "max_items": 200})).content[0].text)
+            check("expired-handle", e0.get("error") == "expired_handle", e0.get("error"))
+            check("expired-distinct-from-unknown", e0.get("error") == "expired_handle" and e0.get("error") != "unknown_handle")
+            hs = []
+            for i in range(1, 5):
+                ci = json.loads((await s2.call_tool("call_capability_compact", {"tool_id": "cap_0361", "arguments": json.dumps({"n": i})})).content[0].text)
+                hs.append(ci["model_view"]["result_id"])
+            check("handles-distinct", len(set(hs)) == 4, str(hs))
+            ev = json.loads((await s2.call_tool("get_full_result", {"result_handle": hs[0], "max_items": 200})).content[0].text)
+            check("evicted-oldest-unknown", ev.get("error") == "unknown_handle", ev.get("error"))
     print("GREEN" if not FAIL else f"RED {FAIL}", flush=True)
     sys.exit(1 if FAIL else 0)
 

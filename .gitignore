@@ -4,3 +4,4 @@ node_modules/
 test-results/
 __pycache__/
 gateway_calls.jsonl
+evals/e2e_traces/

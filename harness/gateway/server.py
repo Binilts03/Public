@@ -9,7 +9,9 @@ Probe: python evals/gateway_probe.py
 """
 import hashlib
 import json
+import os
 import re
+import time
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
@@ -288,8 +290,56 @@ def call_capability(tool_id: str, arguments: str = "{}") -> str:
 # realistically sized (seeded per tool id): N_ITEM rows of structured data.
 # Compact view is bounded (<=3 top items, snippets <=200 chars); the full
 # payload is addressable via result_handle. No LLM summarization anywhere.
+#
+# P0.3 lifecycle (ADR-0003 negative, first cut): handles are timestamped with
+# a fixed TTL and the store is bounded with oldest-first eviction. Fetches
+# distinguish unknown_handle (never issued / evicted) from expired_handle
+# (issued but past TTL). Each handle is bound to its issuing tool_id and every
+# fetch outcome is logged (per-fetch auth stub; no caller identity yet).
 _RESULT_STORE: dict = {}
 _N_ITEMS = 200
+_RESULT_TTL_S = int(os.environ.get("CAP_RESULT_TTL_S", "3600"))
+_RESULT_MAX = max(1, int(os.environ.get("CAP_RESULT_MAX", "100")))
+
+
+def _result_now() -> float:
+    return time.time()
+
+
+def _store_result(handle: str, full: dict, tool_id: str, now: float | None = None) -> None:
+    """Insert/refresh a handle binding; evict oldest while at capacity."""
+    now = _result_now() if now is None else now
+    if handle in _RESULT_STORE:
+        del _RESULT_STORE[handle]  # refresh recency on re-issue
+    while len(_RESULT_STORE) >= _RESULT_MAX:
+        del _RESULT_STORE[next(iter(_RESULT_STORE))]
+    _RESULT_STORE[handle] = {"payload": full, "created_at": now, "tool_id": tool_id}
+
+
+def _fetch_result(handle: str, now: float | None = None):
+    """Return (status, payload, bound_tool_id); status in hit/expired/unknown.
+
+    Expired entries are deleted on observation (distinct from unknown).
+    Hits refresh recency (LRU touch). Legacy plain-payload entries, if any,
+    are treated as unexpired hits.
+    """
+    now = _result_now() if now is None else now
+    entry = _RESULT_STORE.get(handle)
+    if entry is None:
+        return ("unknown", None, None)
+    if not (isinstance(entry, dict) and "payload" in entry and "created_at" in entry):
+        return ("hit", entry, None)  # legacy pre-lifecycle entry
+    if now - entry["created_at"] > _RESULT_TTL_S:
+        try:
+            del _RESULT_STORE[handle]
+        except KeyError:
+            pass
+        return ("expired", None, entry.get("tool_id"))
+    try:
+        _RESULT_STORE[handle] = _RESULT_STORE.pop(handle)  # LRU touch
+    except KeyError:
+        pass
+    return ("hit", entry["payload"], entry.get("tool_id"))
 
 
 def _full_payload(tool_id: str, args: dict) -> dict:
@@ -323,7 +373,7 @@ def call_capability_compact(tool_id: str, arguments: str = "{}") -> str:
         return json.dumps({"ok": False, "error": "invalid_arguments_json", "tool_id": tool_id})
     full = _full_payload(tool_id, args)
     handle = "res_" + hashlib.sha256(json.dumps(full)[:512].encode()).hexdigest()[:12]
-    _RESULT_STORE[handle] = full
+    _store_result(handle, full, tool_id)
     view = {"ok": True, "tool_id": tool_id, "dry_run": True,
             "model_view": {"result_id": handle, "matched_count": full["matched_count"],
                            "top_items": [{**it, "snippet": it["snippet"][:200]} for it in full["items"][:3]]},
@@ -336,11 +386,26 @@ def call_capability_compact(tool_id: str, arguments: str = "{}") -> str:
 
 @mcp.tool()
 def get_full_result(result_handle: str, max_items: int = 200) -> str:
-    """Demand-load full result rows behind a compact-view handle (lossless)."""
-    _log("get_full_result", {"handle": result_handle, "max_items": max_items})
-    full = _RESULT_STORE.get(result_handle)
-    if full is None:
+    """Demand-load full result rows behind a compact-view handle (lossless).
+
+    Errors distinguish unknown_handle (never issued or evicted under the
+    store cap) from expired_handle (issued but past TTL). The handle is bound
+    to its issuing tool_id; every fetch outcome is logged (auth stub).
+    """
+    status, full, bound = _fetch_result(result_handle)
+    if status == "unknown":
+        _log("get_full_result", {"handle": result_handle, "max_items": max_items,
+                                 "outcome": "unknown_handle"})
         return json.dumps({"ok": False, "error": "unknown_handle", "handle": result_handle})
+    if status == "expired":
+        _log("get_full_result", {"handle": result_handle, "max_items": max_items,
+                                 "outcome": "expired_handle", "tool_id": bound})
+        res = {"ok": False, "error": "expired_handle", "handle": result_handle}
+        if bound is not None:
+            res["tool_id"] = bound
+        return json.dumps(res)
+    _log("get_full_result", {"handle": result_handle, "max_items": max_items,
+                             "outcome": "hit", "tool_id": bound})
     out = dict(full)
     out["items"] = out["items"][: max(1, min(_N_ITEMS, max_items))]
     out["truncated"] = len(full["items"]) > len(out["items"])
