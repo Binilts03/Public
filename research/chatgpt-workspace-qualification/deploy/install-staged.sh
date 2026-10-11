@@ -4,7 +4,7 @@
 set -euo pipefail
 umask 077
 if [[ "$(id -u)" -ne 0 ]]; then echo "Run with sudo on a disposable Ubuntu VM." >&2; exit 2; fi
-HERE="$(cd -- "$(dirname -- "\${BASH_SOURCE[0]}")" && pwd -P)"
+HERE="$(cd -- "$(dirname -- "$0")" && pwd -P)"
 UPSTREAM_SHA="dec01b9f50f966097ddfc84d357d12a52f238935"
 ROOT="/srv/chatgpt-coder"
 SERVICE_USER="chatgpt-coder"
