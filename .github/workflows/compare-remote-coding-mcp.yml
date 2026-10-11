@@ -93,6 +93,45 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
 
+  staged-linux-host:
+    name: staging installer qualifies on disposable Ubuntu (NO service activation)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout ONLY Public qualification branch
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Static staged-package contract
+        run: |
+          python3 research/chatgpt-workspace-qualification/deploy/validate_staging.py
+      - name: Execute installer on EPHEMERAL GitHub-hosted Ubuntu
+        run: |
+          sudo bash research/chatgpt-workspace-qualification/deploy/install-staged.sh
+      - name: Verify exact users, permissions, staged units, single repo, no services started
+        run: |
+          test "$(id -un "$(id -u chatgpt-controller)")" = chatgpt-controller
+          test "$(id -un "$(id -u chatgpt-worker)")" = chatgpt-worker
+          test "$(id -u chatgpt-controller)" != "$(id -u chatgpt-worker)"
+          test "$(sudo stat -c '%U:%a' /srv/chatgpt-controller/state)" = "chatgpt-controller:700"
+          test "$(sudo stat -c '%U:%a' /srv/chatgpt-worker/state)" = "chatgpt-worker:700"
+          test "$(sudo stat -c '%U:%a' /etc/chatgpt-coder/controller.env)" = "root:600"
+          test "$(sudo stat -c '%U:%a' /etc/chatgpt-coder/worker.env)" = "root:600"
+          ! sudo grep -Eq '^(LOCAL_SHELL_MCP_OAUTH_|.*JWT_SECRET=|.*ADMIN_PIN=)' /etc/chatgpt-coder/worker.env
+          grep -qx 'LOCAL_SHELL_MCP_DISABLE_LOCAL=true' /etc/chatgpt-coder/controller.env
+          grep -qx 'LOCAL_SHELL_MCP_REMOTE_ENABLED=true' /etc/chatgpt-coder/controller.env
+          sudo -u chatgpt-worker git -C /srv/chatgpt-worker/worktrees/Public status --porcelain
+          test "$(sudo -u chatgpt-worker git -C /srv/chatgpt-worker/git/Public remote get-url --push origin)" = "no-push://disabled"
+          test "$(sudo git -C /opt/chatgpt-coder/source rev-parse HEAD)" = dec01b9f50f966097ddfc84d357d12a52f238935
+          test "$(sudo systemctl is-enabled chatgpt-coder.service)" = disabled
+          test "$(sudo systemctl is-enabled chatgpt-worker.service)" = disabled
+          ! sudo systemctl is-active --quiet chatgpt-coder.service
+          ! sudo systemctl is-active --quiet chatgpt-worker.service
+          test ! -e /srv/chatgpt-controller/git/Public
+          ! sudo -u chatgpt-worker test -r /srv/chatgpt-controller/state
+          ! sudo -u chatgpt-worker test -r /etc/chatgpt-coder/controller.env
+          echo "PASS ephemeral-only staged install: controller/worker are separate, Public-only, services disabled."
+
   chatgpt-local-coder:
     name: chatgpt-local-coder upstream tests and unsafe-default assessment
     runs-on: ubuntu-24.04
