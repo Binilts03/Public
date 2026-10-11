@@ -13,7 +13,7 @@ Environment=HOME=/srv/chatgpt-coder/home
 Environment=XDG_CONFIG_HOME=/srv/chatgpt-coder/home/.config
 Environment=PYTHONDONTWRITEBYTECODE=1
 EnvironmentFile=/etc/chatgpt-coder/runtime.env
-ExecStart=/opt/chatgpt-coder/venv/bin/local-shell-mcp --mode mcp --no-remote
+ExecStart=/opt/chatgpt-coder/venv/bin/python /opt/chatgpt-coder/nondumpable_mcp_entrypoint.py --mode mcp --no-remote
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=20
