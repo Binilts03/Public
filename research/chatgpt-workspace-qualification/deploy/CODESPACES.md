@@ -85,6 +85,48 @@ The launcher now tests controller-user runtime imports *before* starting and
 preserves the original private crash log. A failed import is not evidence
 that the server is externally available.
 
+## Live localhost OAuth → worker execution qualification
+
+After `LOCAL_CONTROLLER_GATE_PASS`, leave port 8765 **Private** and run:
+
+```bash
+cd /workspaces/Public
+git pull --ff-only origin experiments/chatgpt-workspace-qualification
+/opt/public-chatgpt-mcp/venv/bin/python -m py_compile \
+  research/chatgpt-workspace-qualification/deploy/codespaces-enroll-verify-worker.py
+sudo /opt/public-chatgpt-mcp/venv/bin/python \
+  research/chatgpt-workspace-qualification/deploy/codespaces-enroll-verify-worker.py
+```
+
+The program validates the previously qualified Linux identities, root-owned
+runtime and Public-only disabled-push worktree; reads OAuth credentials only
+inside the root process; obtains an expiring locally bound OAuth token using
+S256 PKCE; rejects missing/invalid bearer tokens and OAuth code replay;
+proves controller shell execution is disabled; requests an invite; passes
+the single-use worker invite via a pipe to `chatgpt-worker` (never an argument);
+and runs a **read-only shell command** on the isolated Public worker. It
+verifies output markers for worker identity, git root, disabled push remote,
+controller-credential inaccessibility, original-workspace ACL denial and
+Docker-socket denial.
+
+The program does **not** publish a port, push Git commits, change the original
+worktree, or expose credentials in its output. On verified success it
+intentionally leaves the worker running as `chatgpt-worker` for the next
+ordinary-ChatGPT plugin connection gate. This is a temporary Codespaces
+qualification, not a supervised always-on worker. A crashed/suspended
+Codespace requires lifecycle revalidation.
+
+Success requires `LOCAL_OAUTH_PKCE_PASS`,
+`LOCAL_MCP_CONTROL_PLANE_PASS`,
+`WORKER_ENROLLMENT_AND_REMOTE_SHELL_PASS`,
+and `PORT_VISIBILITY_UNCHANGED`.
+
+**Do not rerun this enrollment script** after it has registered the worker.
+If an intermediate step fails, worker identity or authorization state might
+have been persisted. Preserve it and diagnose separately; never wipe
+`/srv/chatgpt-worker/state` or regenerate the controller OAuth secret to
+make a failing test pass.
+
 ## Public ingress is an additional user-controlled security gate
 
 Do **not** make Codespaces port 8765 public until the two results above and a host-identity review pass. GitHub's private forwarded-port authentication is not automatically compatible with ChatGPT's MCP OAuth client. A public forwarded port has no GitHub authentication; rely on the MCP OAuth boundary only after external discovery/authentication/negative tests succeed.
