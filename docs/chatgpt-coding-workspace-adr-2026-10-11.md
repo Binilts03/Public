@@ -61,6 +61,14 @@ The historical newly introduced E2E failures were test client mismatches against
 
 **Environment isolation note:** the selected backend [filters subprocess environment variables](https://github.com/fwerkor/local-shell-mcp/blob/dec01b9f50f966097ddfc84d357d12a52f238935/src/local_shell_mcp/shell_environment.py) and [defaults to stripping `LOCAL_SHELL_MCP_` prefixed variables](https://github.com/fwerkor/local-shell-mcp/blob/dec01b9f50f966097ddfc84d357d12a52f238935/src/local_shell_mcp/settings.py). This is not a substitute for OS-enforced sandboxing, separate process credentials, or safe secret placement.
 
+## Live running-job recovery evidence
+
+**Run:** [38154021236](https://github.com/Binilts03/Public/actions/runs/38154021236); [artifact](https://github.com/Binilts03/Public/actions/runs/38154021236/artifacts/11708225139). The new independent [`real_job_restart_e2e.py`](../research/chatgpt-workspace-qualification/real_job_restart_e2e.py) used the authenticated MCP protocol to launch a *still-running* delayed Python job, terminated the MCP server process, restarted it with the same state store, and checked the original job record, exact ID, exit status, retained output and on-disk artifact. The final verified status was `succeeded`, exit code `0`, all evidence present; duration approximately 8.15s.
+
+**Classification:** H5a — graceful OS MCP *process-only* restart with a background tmux-system job **PASS**. This is not a machine reboot, unclean `SIGKILL`, default systemd `KillMode=control-group` restart, or a crash-atomic transactional job-ledger test. Do not generalize beyond the exact checked conditions.
+
+The first independent job test incorrectly asserted `completed` as the successful terminal status. Live output established the actual result `succeeded` and `exit_code=0`; the assertion was corrected without removing any output/artifact/identity checks. Failed historical runs remain recorded.
+
 ## Remaining qualification gates
 
 1. **H1 — Durable host, isolated permissions:** obtain a Linux runtime that persists filesystem and tasks between chats. Prove clean rebuild, restart, isolation and no cross-repository access; no host provider is selected by this ADR.
