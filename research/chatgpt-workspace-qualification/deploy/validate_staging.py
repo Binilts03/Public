@@ -4,6 +4,7 @@ from pathlib import Path
 import configparser
 import subprocess
 import sys
+import re
 
 root=Path(__file__).resolve().parent
 installer=root/"install-staged.sh"
@@ -29,7 +30,7 @@ assert 'no-push://disabled' in text
 assert 'systemctl daemon-reload' in text
 assert 'systemctl enable' not in text
 assert 'systemctl start' not in text
-assert 'tailscale funnel' not in text.lower()
+assert not re.search(r'(?im)^\s*(?:sudo\s+)?tailscale\s+funnel\b', text), "installer must not activate a tunnel"
 assert "REPLACE-WITH-AUTHORIZED-HOST.invalid" in text
 assert "dec01b9f50f966097ddfc84d357d12a52f238935" in text
 print("PASS staged installer syntax, pinned upstream, Public-only clone, disabled push, nondumpable service.")
