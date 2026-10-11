@@ -1,0 +1,44 @@
+[Unit]
+Description=ChatGPT isolated coding workspace (local-shell-mcp)
+Documentation=https://github.com/fwerkor/local-shell-mcp
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=chatgpt-coder
+Group=chatgpt-coder
+WorkingDirectory=/srv/chatgpt-coder/worktrees/Public
+Environment=HOME=/srv/chatgpt-coder/home
+Environment=XDG_CONFIG_HOME=/srv/chatgpt-coder/home/.config
+Environment=PYTHONDONTWRITEBYTECODE=1
+EnvironmentFile=/etc/chatgpt-coder/runtime.env
+ExecStart=/opt/chatgpt-coder/venv/bin/local-shell-mcp --mode mcp --no-remote
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/srv/chatgpt-coder
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LimitNOFILE=8192
+TasksMax=256
+MemoryMax=8G
+
+[Install]
+WantedBy=multi-user.target
