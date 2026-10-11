@@ -85,9 +85,19 @@ install -d -o root -g root -m 0755 "$RUNTIME"
 cp -a "$SRC" "$RUNTIME/source"
 chown -R root:root "$RUNTIME/source"
 [[ "$(git -C "$RUNTIME/source" rev-parse HEAD)" == "$PIN" ]] || abort "copied pin mismatch"
-"$SYSTEM_PY" -m venv "$RUNTIME/venv"
-"$RUNTIME/venv/bin/python" -m pip install --disable-pip-version-check "$RUNTIME/source"
+# The app runtime is public-code, not credential state. Use standard read
+# permissions for both restricted Linux identities. Keep the top-level installer
+# umask 077 for all OAuth env/state files created later.
+(
+  umask 022
+  "$SYSTEM_PY" -m venv "$RUNTIME/venv"
+  "$RUNTIME/venv/bin/python" -m pip install --disable-pip-version-check "$RUNTIME/source"
+)
 "$RUNTIME/venv/bin/python" -c 'import sys,local_shell_mcp; assert sys.version_info[:2]==(3,12)'
+runuser -u "$CTRL" -- "$RUNTIME/venv/bin/python" -c 'import local_shell_mcp.main' ||
+  abort "controller cannot import staged root-owned Python runtime"
+runuser -u "$WORKER" -- "$RUNTIME/venv/bin/python" -c 'import local_shell_mcp.remote_worker' ||
+  abort "worker cannot import staged root-owned Python runtime"
 install -o root -g root -m 0755 \
   "$REPO/research/chatgpt-workspace-qualification/deploy/nondumpable_mcp_entrypoint.py" \
   "$RUNTIME/nondumpable_mcp_entrypoint.py"
