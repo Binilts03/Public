@@ -1,0 +1,111 @@
+name: Compare remote coding MCP candidates
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - experiments/chatgpt-workspace-qualification
+    paths:
+      - research/chatgpt-workspace-qualification/candidate_fwerkor.py
+      - .github/workflows/compare-remote-coding-mcp.yml
+
+permissions:
+  contents: read
+
+jobs:
+  local-shell-mcp:
+    name: local-shell-mcp pinned regression and independent probe
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Clone and pin external candidate read only
+        run: |
+          git clone --filter=blob:none https://github.com/fwerkor/local-shell-mcp.git /tmp/candidate-local-shell-mcp
+          cd /tmp/candidate-local-shell-mcp
+          git checkout --detach dec01b9f50f966097ddfc84d357d12a52f238935
+          test "$(git rev-parse HEAD)" = dec01b9f50f966097ddfc84d357d12a52f238935
+      - name: Install into runner only
+        run: |
+          python -m pip install --disable-pip-version-check -e '/tmp/candidate-local-shell-mcp[dev]'
+      - name: Upstream targeted regression
+        working-directory: /tmp/candidate-local-shell-mcp
+        run: |
+          python -m pytest -q \
+            tests/test_mcp_chatgpt_compat.py \
+            tests/test_oauth_complete.py \
+            tests/test_skill_tools.py \
+            tests/test_job_mutation_recovery.py \
+            tests/test_tool_security_edge_cases.py \
+            --junitxml=/tmp/local-shell-regression.xml
+      - name: Independent candidate check on disposable files
+        env:
+          REPORT_PATH: /tmp/candidate-fwerkor.json
+        run: |
+          python research/chatgpt-workspace-qualification/candidate_fwerkor.py
+      - name: Retain evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: candidate-fwerkor-evidence
+          path: |
+            /tmp/candidate-fwerkor.json
+            /tmp/local-shell-regression.xml
+          retention-days: 14
+          if-no-files-found: warn
+
+  chatgpt-local-coder:
+    name: chatgpt-local-coder upstream tests and unsafe-default assessment
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Clone and pin external candidate read only
+        run: |
+          git clone --filter=blob:none https://github.com/hoangcoderr/chatgpt-local-coder.git /tmp/candidate-local-coder
+          cd /tmp/candidate-local-coder
+          git checkout --detach bc2ce5e6cb12fac20633065fb122fabbbb5c98c3
+          test "$(git rev-parse HEAD)" = bc2ce5e6cb12fac20633065fb122fabbbb5c98c3
+      - name: Install/build pinned backend
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.24.0 --activate
+          cd /tmp/candidate-local-coder
+          pnpm install --frozen-lockfile
+          pnpm build
+      - name: Run upstream tests on disposable runner
+        working-directory: /tmp/candidate-local-coder
+        run: |
+          pnpm test
+      - name: Independently classify default security boundary
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          root=Path('/tmp/candidate-local-coder')
+          p=(root/'src/lib/permissions.ts').read_text()
+          q=(root/'src/lib/path-security.ts').read_text()
+          open_default='return "open";' in p and 'return true;' in p and 'return path.resolve(trimmed);' in q
+          report={'candidate':'hoangcoderr/chatgpt-local-coder','pin':'bc2ce5e6cb12fac20633065fb122fabbbb5c98c3',
+                  'open_access_by_default':open_default,'production_candidate':False if open_default else 'unverified'}
+          Path('/tmp/chatgpt-local-coder-security.json').write_text(json.dumps(report,indent=2)+'\n')
+          assert open_default, 'Source changed: re-review permission controls before use'
+          print(report)
+          PY
+      - name: Retain security finding
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: candidate-local-coder-evidence
+          path: /tmp/chatgpt-local-coder-security.json
+          retention-days: 14
+          if-no-files-found: warn
