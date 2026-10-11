@@ -43,6 +43,24 @@ Verified upstream defaults requiring attention:
 - `remote_enabled = True`, `auth_bypass_localhost = True`, `oauth_access_token_ttl_s = 0` (no expiry), `host = 0.0.0.0` in [settings source](https://github.com/fwerkor/local-shell-mcp/blob/dec01b9f50f966097ddfc84d357d12a52f238935/src/local_shell_mcp/settings.py).
 - The [security policy](https://github.com/fwerkor/local-shell-mcp/blob/dec01b9f50f966097ddfc84d357d12a52f238935/SECURITY.md) explicitly advises running in a disposable container or VM and never mounting host root/Docker socket.
 
+## Additional live HTTP / process restart qualification — 2026-10-11
+
+**Run:** [38153570898](https://github.com/Binilts03/Public/actions/runs/38153570898); [evidence artifact](https://github.com/Binilts03/Public/actions/runs/38153570898/artifacts/11707821382). This run successfully executed [`real_process_oauth_e2e.py`](../research/chatgpt-workspace-qualification/real_process_oauth_e2e.py) against a genuine `local-shell-mcp` subprocess with restricted loopback-only listening.
+
+Verified in one end-to-end test:
+1. OAuth metadata, client registration, interactive consent endpoint, authorization-code S256 PKCE exchange and an expiring one-hour bearer token.
+2. Missing/wrong bearer tokens, incorrect verifier and OAuth authorization-code reuse rejected.
+3. Real Streamable HTTP MCP session using pinned Python SDK; retrieved registered tools.
+4. Real HTTP MCP skill discovery and exact instruction-body retrieval.
+5. Created/reported durable logical task. **Terminated the OS server process**, restarted it using the same state storage, reconnected through a fresh MCP session and successfully resumed the exact task report.
+6. Disposable out-of-workspace fixture unchanged.
+
+This run is **H2a: actual loopback OAuth + MCP protocol and process restart PASS**, not H2 production TLS or H3 actual ChatGPT plugin. It does **not** qualify long-running job survival/reconciliation across crash, external network exposure, multi-user authorizations, external ingress Host behavior, OS sandbox enforcement, true skills trigger quality, or Codex task-outcome parity.
+
+The historical newly introduced E2E failures were test client mismatches against the pinned MCP 1.30 SDK: `streamablehttp_client` lacks the `http_client` parameter; use `streamable_http_client`. Its `InitializeResult` field is `serverInfo`, not `server_info`. Both were corrected without weakening authorization or recovery assertions.
+
+**Environment isolation note:** the selected backend [filters subprocess environment variables](https://github.com/fwerkor/local-shell-mcp/blob/dec01b9f50f966097ddfc84d357d12a52f238935/src/local_shell_mcp/shell_environment.py) and [defaults to stripping `LOCAL_SHELL_MCP_` prefixed variables](https://github.com/fwerkor/local-shell-mcp/blob/dec01b9f50f966097ddfc84d357d12a52f238935/src/local_shell_mcp/settings.py). This is not a substitute for OS-enforced sandboxing, separate process credentials, or safe secret placement.
+
 ## Remaining qualification gates
 
 1. **H1 — Durable host, isolated permissions:** obtain a Linux runtime that persists filesystem and tasks between chats. Prove clean rebuild, restart, isolation and no cross-repository access; no host provider is selected by this ADR.
