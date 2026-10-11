@@ -1,0 +1,69 @@
+name: Qualify ChatGPT coding workspace backend
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - experiments/chatgpt-workspace-qualification
+    paths:
+      - research/chatgpt-workspace-qualification/**
+      - .github/workflows/workspace-mcp-qualification.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chatgpt-workspace-qualification
+  cancel-in-progress: true
+
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout ONLY Public qualification branch
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Record environment
+        run: |
+          git rev-parse HEAD
+          node --version
+          python3 --version
+          git --version
+          python3 -m py_compile research/chatgpt-workspace-qualification/conformance.py
+      - name: Fetch upstream source READ ONLY at pinned commit
+        run: |
+          git clone --filter=blob:none https://github.com/MarcoCaamal/workspace-mcp.git /tmp/workspace-mcp
+          cd /tmp/workspace-mcp
+          git checkout --detach 36c9af51c076d2e31517137ab202983dcc52681d
+          test "$(git rev-parse HEAD)" = 36c9af51c076d2e31517137ab202983dcc52681d
+      - name: Build pinned backend
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.24.0 --activate
+          cd /tmp/workspace-mcp
+          pnpm install --frozen-lockfile
+          pnpm build
+      - name: Upstream regression suite
+        id: upstream
+        run: |
+          cd /tmp/workspace-mcp
+          pnpm test
+      - name: Independent live MCP conformance
+        if: success()
+        run: |
+          python3 research/chatgpt-workspace-qualification/conformance.py \
+            --server-js /tmp/workspace-mcp/dist/index.js \
+            --output research/chatgpt-workspace-qualification/live-result.json
+      - name: Upload evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chatgpt-workspace-backend-evidence
+          path: research/chatgpt-workspace-qualification/live-result.json
+          retention-days: 14
+          if-no-files-found: warn
