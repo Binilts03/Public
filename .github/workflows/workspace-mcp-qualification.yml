@@ -4,9 +4,6 @@ on:
   push:
     branches:
       - experiments/chatgpt-workspace-qualification
-    paths:
-      - research/chatgpt-workspace-qualification/**
-      - .github/workflows/workspace-mcp-qualification.yml
 
 permissions:
   contents: read
