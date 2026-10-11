@@ -61,6 +61,10 @@ jobs:
           JOB_RESTART_REPORT: /tmp/public-job-restart.json
         run: |
           python research/chatgpt-workspace-qualification/real_job_restart_e2e.py
+      - name: Validate Public-only staged deployment files (no deployment)
+        if: success()
+        run: |
+          python research/chatgpt-workspace-qualification/deploy/validate_staging.py
       - name: Security gate - authenticated shell must not read server OAuth secrets
         if: success()
         env:
