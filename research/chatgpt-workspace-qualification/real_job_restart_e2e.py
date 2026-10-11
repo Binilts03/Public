@@ -54,7 +54,7 @@ async def run_mcp(url, token, action, job_id=None):
                     match=next((j for j in jobs if j.get("job_id")==job_id),None)
                     assert match is not None, ("Durable job record missing",data)
                     last=match
-                    if match.get("status") in {"completed","failed","lost","stopped","cancelled"}:
+                    if match.get("status") in {"succeeded","failed","lost","stopped","cancelled"}:
                         break
                     await asyncio.sleep(.3)
                 assert last is not None
@@ -95,7 +95,7 @@ def main():
         with server(env,url,log):
             verdict=asyncio.run(run_mcp(url,token,"inspect",jobid))
             assert verdict["job"]["job_id"]==jobid
-            assert verdict["job"]["status"]=="completed",(verdict, "Expected successful completed job")
+            assert verdict["job"]["status"]=="succeeded",(verdict, "Expected successful completed job")
             assert verdict["job"]["exit_code"]==0,verdict
             assert (work/"job-finished.txt").read_text()=="DONE"
             assert "JOB_RESTART_CANARY" in json.dumps(verdict["tail"])
