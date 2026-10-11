@@ -55,6 +55,36 @@ sudo bash research/chatgpt-workspace-qualification/deploy/codespaces-start-contr
 
 Do **not** make port 8765 public as part of this step. Even a clean ACL denial on /workspaces/Public does not itself prove complete host sandboxing, job supervision, or ordinary ChatGPT tool execution.
 
+## Recover runtime import failure after successful worker isolation
+
+On the actual Codespace, the first OAuth controller launch failed its health
+check, and the diagnostic confirmed `controller_python_import: NO` while the
+runtime executable and secrets existed. The original privileged installer
+set `umask 077` for all files, inadvertently making the Python runtime
+directories non-traversable by the distinct controller UID. An independent
+Python virtualenv fixture reproduced directory mode `0700` under this umask.
+
+**Do not rerun the privileged installer or regenerate the OAuth secrets.**
+The dedicated runtime repair applies only to root-owned public-code files under
+`/opt/public-chatgpt-mcp/venv`, only when the controller and worker are
+stopped and the earlier root-only isolation attestation is present. It rejects
+unexpected symlinks, confirms controller/worker imports and rechecks the
+original Codespaces ACL and OAuth secret boundary.
+
+```bash
+cd /workspaces/Public
+git pull --ff-only origin experiments/chatgpt-workspace-qualification
+python3 -m py_compile research/chatgpt-workspace-qualification/deploy/codespaces-repair-runtime.py
+sudo python3 research/chatgpt-workspace-qualification/deploy/codespaces-repair-runtime.py
+```
+
+Require `RUNTIME_PERMISSIONS_REPAIRED_PASS` and
+`NO_SECRETS_CHANGED_NO_PROCESS_STARTED_NO_PORT_EXPOSED`.
+Only then retry `codespaces-start-controller.sh "$CODESPACE_NAME"`.
+The launcher now tests controller-user runtime imports *before* starting and
+preserves the original private crash log. A failed import is not evidence
+that the server is externally available.
+
 ## Public ingress is an additional user-controlled security gate
 
 Do **not** make Codespaces port 8765 public until the two results above and a host-identity review pass. GitHub's private forwarded-port authentication is not automatically compatible with ChatGPT's MCP OAuth client. A public forwarded port has no GitHub authentication; rely on the MCP OAuth boundary only after external discovery/authentication/negative tests succeed.
