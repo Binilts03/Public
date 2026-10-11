@@ -79,6 +79,10 @@ http_code="$(curl --silent --show-error --output /dev/null --write-out '%{http_c
 [[ "$http_code" == 401 ]] || abort "unauthenticated MCP request returned HTTP $http_code (expected 401)"
 [[ -n "$(pgrep -u "$CTRL" -f 'nondumpable_mcp_entrypoint.py' || true)" ]] ||
   abort "controller process disappeared"
+for pid in $(pgrep -u "$CTRL" -f 'nondumpable_mcp_entrypoint.py'); do
+  runuser -u "$WORKER" -- test ! -r "/proc/$pid/environ" ||
+    abort "worker can read controller process environment"
+done
 echo 'LOCAL_CONTROLLER_GATE_PASS OAuth metadata, PKCE, unauthenticated denial, and separate UID.'
 echo "PUBLIC_BASE=$PUBLIC_BASE"
 echo "MCP_URL=$PUBLIC_BASE/mcp"
