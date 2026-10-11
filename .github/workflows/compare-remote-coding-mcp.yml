@@ -126,6 +126,8 @@ jobs:
           bash -n research/chatgpt-workspace-qualification/deploy/codespaces-start-controller.sh
           bash -n research/chatgpt-workspace-qualification/deploy/codespaces-qualify-partial.sh
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/codespaces-diagnose-controller.py
+          python3 -m py_compile research/chatgpt-workspace-qualification/deploy/codespaces-repair-runtime.py
+          python3 -m py_compile research/chatgpt-workspace-qualification/deploy/tests/test_codespaces_runtime_permissions.py
           python3 - <<'PY'
           from pathlib import Path
           root=Path('research/chatgpt-workspace-qualification/deploy')
@@ -189,6 +191,9 @@ jobs:
           rm -rf -- "$fixture"
           echo "PASS: targeted Linux ACL denies low-privilege worker without disabling workspace owner"
 
+      - name: Exercise restricted-umask runtime repair and unsafe symlink refusal
+        run: |
+          sudo python3 research/chatgpt-workspace-qualification/deploy/tests/test_codespaces_runtime_permissions.py
       - name: Execute installer on EPHEMERAL GitHub-hosted Ubuntu
         run: |
           sudo bash research/chatgpt-workspace-qualification/deploy/install-staged.sh
