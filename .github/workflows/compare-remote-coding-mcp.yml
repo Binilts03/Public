@@ -125,6 +125,7 @@ jobs:
           bash -n research/chatgpt-workspace-qualification/deploy/codespaces-isolated-stage.sh
           bash -n research/chatgpt-workspace-qualification/deploy/codespaces-start-controller.sh
           bash -n research/chatgpt-workspace-qualification/deploy/codespaces-qualify-partial.sh
+          bash -n research/chatgpt-workspace-qualification/deploy/codespaces-deny-worker-workspaces.sh
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/codespaces-diagnose-controller.py
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/codespaces-repair-runtime.py
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/codespaces-enroll-verify-worker.py
@@ -193,6 +194,17 @@ jobs:
           assert 'BLOCKER_ROOT:' in workspaces_diag
           assert 'BLOCKER_SIBLING:' in workspaces_diag
           assert 'NO_FILES_READ_NO_ACL_WRITES_NO_GIT_MUTATIONS_NO_PORT_CHANGES' in workspaces_diag
+          parent_repair=(root/'codespaces-deny-worker-workspaces.sh').read_text()
+          assert 'setfacl -n -m "u:$WORKER:---" "$PARENT"' in parent_repair
+          assert 'getfacl -p "$PARENT" > "$SNAPSHOT"' in parent_repair
+          assert 'PARENT_WORKSPACE_ISOLATION_PASS' in parent_repair
+          assert 'NO_SIBLING_REPO_MUTATIONS_NO_SECRETS_CHANGED_NO_WORKER_ENROLLED_NO_PORT_CHANGES' in parent_repair
+          assert 'runuser -u codespace -- test -x "$PARENT"' in parent_repair
+          assert 'runuser -u "$WORKER" -- test ! -w "$other"' in parent_repair
+          assert 'chown root:root "$SNAPSHOT"' in parent_repair
+          assert 'chmod 0600 "$SNAPSHOT"' in parent_repair
+          assert 'git -C "$ORIGINAL" status --porcelain' in parent_repair
+          assert '--recursive' not in parent_repair and 'chmod -R' not in parent_repair
           for bad in ('setfacl', 'chmod(', 'chown(', 'unlink(', 'mkdir(', 'shutil.rmtree', 'os.remove(', 'subprocess.Popen('):
               assert bad not in workspaces_diag, bad
           assert 'codespaces-isolation-qualified' in launch
@@ -222,6 +234,32 @@ jobs:
           sudo userdel "$user"
           rm -rf -- "$fixture"
           echo "PASS: targeted Linux ACL denies low-privilege worker without disabling workspace owner"
+
+      - name: Prove parent ACL alone blocks child and sibling directory access
+        run: |
+          set -euo pipefail
+          if ! command -v setfacl >/dev/null || ! command -v getfacl >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y acl
+          fi
+          user=public-parent-acl-ci
+          sudo useradd --system --user-group "$user"
+          testroot="$(mktemp -d /tmp/public-parent-acl.XXXXXXXX)"
+          mkdir -p "$testroot/workspaces/Public" "$testroot/workspaces/OtherExample"
+          chmod 0777 "$testroot" "$testroot/workspaces" "$testroot/workspaces/Public" "$testroot/workspaces/OtherExample"
+          sudo -u "$user" test -w "$testroot/workspaces/OtherExample"
+          sudo -u "$user" test -x "$testroot/workspaces/Public"
+          original_mode="$(stat -c %a "$testroot/workspaces/OtherExample")"
+          sudo setfacl -n -m "u:$user:---" "$testroot/workspaces"
+          ! sudo -u "$user" test -x "$testroot/workspaces"
+          ! sudo -u "$user" test -w "$testroot/workspaces"
+          ! sudo -u "$user" test -x "$testroot/workspaces/Public"
+          ! sudo -u "$user" test -w "$testroot/workspaces/OtherExample"
+          test -w "$testroot/workspaces/OtherExample"
+          test "$(stat -c %a "$testroot/workspaces/OtherExample")" = "$original_mode"
+          sudo userdel "$user"
+          rm -rf -- "$testroot"
+          echo "PASS: parent ACL denies worker access to all sibling paths without touching sibling permissions"
 
       - name: Exercise restricted-umask runtime repair and unsafe symlink refusal
         run: |
