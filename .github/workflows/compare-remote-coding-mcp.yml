@@ -128,6 +128,7 @@ jobs:
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/codespaces-diagnose-controller.py
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/codespaces-repair-runtime.py
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/codespaces-enroll-verify-worker.py
+          python3 -m py_compile research/chatgpt-workspace-qualification/deploy/codespaces-diagnose-workspaces.py
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/tests/test_codespaces_runtime_permissions.py
           python3 - <<'PY'
           from pathlib import Path
@@ -187,6 +188,13 @@ jobs:
           assert 'remote_manage' in attest and 'run_shell' in attest
           assert 'gh codespace ports visibility' not in attest
           assert 'git push' not in attest
+          assert '"worker can write /workspaces root;' in attest
+          workspaces_diag=(root/'codespaces-diagnose-workspaces.py').read_text()
+          assert 'BLOCKER_ROOT:' in workspaces_diag
+          assert 'BLOCKER_SIBLING:' in workspaces_diag
+          assert 'NO_FILES_READ_NO_ACL_WRITES_NO_GIT_MUTATIONS_NO_PORT_CHANGES' in workspaces_diag
+          for bad in ('setfacl', 'chmod(', 'chown(', 'unlink(', 'mkdir(', 'shutil.rmtree', 'os.remove(', 'subprocess.Popen('):
+              assert bad not in workspaces_diag, bad
           assert 'codespaces-isolation-qualified' in launch
           assert 'worker can traverse original Codespaces checkout' in launch
           assert 'worker can write to original Codespaces checkout' in launch
