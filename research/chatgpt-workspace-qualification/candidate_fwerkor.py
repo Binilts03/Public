@@ -89,8 +89,14 @@ async def scenario(root: Path):
     report.append({"gate":"Resume logical task with fresh MCP object","status":"PASS","detail":"Verified saved summary"})
 
     outside=root/"outside.txt"; outside.write_text("DONOTMODIFY\n")
-    _, escaped = await mcp.call_tool("file_read",{"path":"../outside.txt"})
-    assert escaped.get("ok") is not True,escaped
+    escaped_result = await mcp.call_tool("file_read",{"path":"../outside.txt"})
+    assert isinstance(escaped_result, (list,tuple)) and len(escaped_result)>=2,repr(escaped_result)
+    structured = next((v for v in escaped_result if isinstance(v,dict) and "ok" in v),None)
+    rejected = any(v is True for v in escaped_result[2:]) or (
+        structured is not None and structured.get("ok") is False
+    )
+    assert rejected, ("Path escape unexpectedly succeeded",repr(escaped_result)[:700])
+    assert "DONOTMODIFY" not in str(escaped_result), "Escaped file content was disclosed"
     assert outside.read_text()=="DONOTMODIFY\n"
     report.append({"gate":"Outside-file read blocked","status":"PASS","detail":"Unchanged external file"})
 
