@@ -155,8 +155,19 @@ def main():
                 "LOCAL_SHELL_MCP_AUTH_MODE":"none",
                 "LOCAL_SHELL_MCP_ALLOW_FULL_CONTAINER":"false",
             })
-            command=["sudo","-u",WORKER_USER,"--",sys.executable,"-m",
-                     "local_shell_mcp.remote_worker","connect",
+            worker_settings = [
+                "HOME="+str(worker_root),
+                "XDG_CONFIG_HOME="+str(worker_root/".config"),
+                "LOCAL_SHELL_MCP_WORKSPACE_ROOT="+str(worker_workspace),
+                "LOCAL_SHELL_MCP_WORKER_STATE_DIR="+str(worker_root/"worker-identity"),
+                "LOCAL_SHELL_MCP_STATE_DIR="+str(worker_root/"state"),
+                "LOCAL_SHELL_MCP_REMOTE_POLL_TIMEOUT_S=1",
+                "LOCAL_SHELL_MCP_REMOTE_ENABLED=false",
+                "LOCAL_SHELL_MCP_AUTH_MODE=none",
+                "LOCAL_SHELL_MCP_ALLOW_FULL_CONTAINER=false",
+            ]
+            command=["sudo","-u",WORKER_USER,"--","env",*worker_settings,
+                     sys.executable,"-m","local_shell_mcp.remote_worker","connect",
                      "--server",url,"--invite",invite,
                      "--name",WORKER_NAME,"--workdir",str(worker_workspace)]
             with open(root/"worker.log","wb") as log_out:
@@ -165,6 +176,12 @@ def main():
                 try:
                     verdict=asyncio.run(tools(url,token,"verify",controller_state=state))
                     assert worker.poll() is None,"Worker died before verification"
+                except BaseException:
+                    diagnostic=(root/"worker.log").read_text(errors="replace")[-3000:]
+                    diagnostic=diagnostic.replace(invite,"[REDACTED-INVITE]").replace(secret,"[REDACTED-SECRET]")
+                    print("Worker return code:",worker.poll(),file=sys.stderr)
+                    print("Worker startup diagnostic:",diagnostic,file=sys.stderr)
+                    raise
                 finally:
                     worker.terminate()
                     try:worker.wait(timeout=6)
