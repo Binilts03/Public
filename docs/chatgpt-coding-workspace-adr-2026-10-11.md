@@ -69,6 +69,20 @@ The historical newly introduced E2E failures were test client mismatches against
 
 The first independent job test incorrectly asserted `completed` as the successful terminal status. Live output established the actual result `succeeded` and `exit_code=0`; the assertion was corrected without removing any output/artifact/identity checks. Failed historical runs remain recorded.
 
+## Credential-boundary evidence and staged controller/worker architecture
+
+**Negative test:** [CI 38154762634](https://github.com/Binilts03/Public/actions/runs/38154762634) proved that an authenticated shell running under the same UNIX UID as the OAuth MCP server could read the process's test JWT secret via /proc, despite subprocess environment filtering. Never deploy single-UID controller + shell.
+
+**Partial mitigation:** [CI 38154997124](https://github.com/Binilts03/Public/actions/runs/38154997124) proved the Linux nondumpable launcher blocks the tested /proc read. That alone is not sufficient because same-UID execution may still read OAuth state files.
+
+**Stronger qualification:** [CI 38156038335](https://github.com/Binilts03/Public/actions/runs/38156038335), [artifact](https://github.com/Binilts03/Public/actions/runs/38156038335/artifacts/11708790019), ran an OAuth controller with local execution disabled, enrolled a worker with a separate Linux UID using the upstream remote-worker protocol, executed an authenticated command remotely, and verified that the worker could not read controller OAuth process environment or private state. Live CI PASS. This is not a complete penetration test.
+
+**Staged architecture:** controller is user `chatgpt-controller`, root-owned secret env in `/etc/chatgpt-coder/controller.env`, state under `/srv/chatgpt-controller/state` (0700), no project repository; worker is separate `chatgpt-worker`, only project checkout is `Binilts03/Public` under `/srv/chatgpt-worker` (0700), Git push URL disabled, no controller signing keys/state. Local controller execution disabled and remote worker enabled. The controller retains a nondumpable launcher as defense in depth.
+
+Deployment files under `research/chatgpt-workspace-qualification/deploy/` provide two systemd units, a staged installer and security/validation tests. Installation deliberately leaves both services disabled/stopped. It does not enroll a worker, enable Tailscale Funnel, create a VM or install a ChatGPT plugin.
+
+**Remaining limitations:** test systemd KillMode=control-group and service restarts on actual host before claiming running-job continuity; qualify file/symlink isolation, network egress, hostile shell commands, authorization and token revocation, dependency integrity, and actual owner skills/harness fidelity. Tailscale Funnel supplies public TLS ingress, not user authentication; OAuth remains mandatory. No persistent production deployment is evidenced.
+
 ## Remaining qualification gates
 
 1. **H1 — Durable host, isolated permissions:** obtain a Linux runtime that persists filesystem and tasks between chats. Prove clean rebuild, restart, isolation and no cross-repository access; no host provider is selected by this ADR.
