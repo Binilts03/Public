@@ -31,6 +31,30 @@ sudo bash research/chatgpt-workspace-qualification/deploy/codespaces-start-contr
 
 Success requires both `ISOLATION_STAGED_PASS` and `LOCAL_CONTROLLER_GATE_PASS`. If a script fails, stop and capture non-secret output. Do not remove directories or recreate users without an audit, and never print the OAuth signing secret.
 
+## Recover an interrupted Stage 2 (existing Codespace)
+
+A real Codespaces run installed both Linux users, the privileged Python runtime, and the worker's Public-only detached worktree, then **blocked because the worker could write to /workspaces/Public**. This is a genuine boundary failure. **Do not rerun the blank-host installer** after it has created users and state, and do not delete, reclone, or regenerate OAuth credentials.
+
+Review the dedicated recovery script before execution. It requires the standard Linux POSIX ACL utilities (Ubuntu package `acl`); install those tools if missing. On a host where the Codespaces workspace mount does not support per-user ACLs, the script refuses to qualify rather than weakening isolation.
+
+```bash
+cd /workspaces/Public
+git pull --ff-only origin experiments/chatgpt-workspace-qualification
+command -v setfacl >/dev/null && command -v getfacl >/dev/null || sudo apt-get install -y acl
+bash -n research/chatgpt-workspace-qualification/deploy/codespaces-qualify-partial.sh
+sudo bash research/chatgpt-workspace-qualification/deploy/codespaces-qualify-partial.sh
+```
+
+This checks the existing credentials without displaying them; checks the worker's pinned Git remote, detached worktree and disabled push; verifies both users' Linux permissions and Docker socket access; saves the existing worktree-root ACL privately and adds only a `chatgpt-worker` deny entry to `/workspaces/Public`; then verifies the Codespace owner still has access and the Git worktree remains clean. It issues a root-only qualification marker only after all checks pass. It does not start a listener or expose a forwarded port. If it stops with `BLOCKED`, inspect before changing anything. The controller launcher also rechecks this boundary at every start.
+
+After **`PARTIAL_STAGE_RECOVERED_PASS`** only:
+
+```bash
+sudo bash research/chatgpt-workspace-qualification/deploy/codespaces-start-controller.sh "$CODESPACE_NAME"
+```
+
+Do **not** make port 8765 public as part of this step. Even a clean ACL denial on /workspaces/Public does not itself prove complete host sandboxing, job supervision, or ordinary ChatGPT tool execution.
+
 ## Public ingress is an additional user-controlled security gate
 
 Do **not** make Codespaces port 8765 public until the two results above and a host-identity review pass. GitHub's private forwarded-port authentication is not automatically compatible with ChatGPT's MCP OAuth client. A public forwarded port has no GitHub authentication; rely on the MCP OAuth boundary only after external discovery/authentication/negative tests succeed.
