@@ -74,7 +74,8 @@ def main():
       "LOCAL_SHELL_MCP_PUBLIC_BASE_URL":url,
       "LOCAL_SHELL_MCP_REMOTE_ENABLED":"false",
       "LOCAL_SHELL_MCP_UI_ENABLED":"false",
-      "LOCAL_SHELL_MCP_ALLOW_FULL_CONTAINER":"false"}
+      "LOCAL_SHELL_MCP_ALLOW_FULL_CONTAINER":"false",
+      "PUBLIC_MCP_LAUNCHER":str(Path(__file__).resolve().parent/"nondumpable_mcp_entrypoint.py")}
     with server(env,url,root/"backend.log"):
       token=oauth_login(url,pin,secret)
       result=asyncio.run(probe(url,token))
