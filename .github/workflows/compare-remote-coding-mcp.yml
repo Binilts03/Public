@@ -131,6 +131,30 @@ jobs:
           ! sudo -u chatgpt-worker test -r /srv/chatgpt-controller/state
           ! sudo -u chatgpt-worker test -r /etc/chatgpt-coder/controller.env
           echo "PASS ephemeral-only staged install: controller/worker are separate, Public-only, services disabled."
+      - name: Prove installer refuses active service without changing staged files
+        run: |
+          set -euo pipefail
+          snapshot() {
+            sudo sha256sum /etc/systemd/system/chatgpt-coder.service /etc/systemd/system/chatgpt-worker.service /etc/chatgpt-coder/controller.env /etc/chatgpt-coder/worker.env
+          }
+          snapshot > /tmp/pre-active-refusal.sha
+          mkdir -p /tmp/active-service-shim
+          cat > /tmp/active-service-shim/systemctl <<'SH'
+          #!/usr/bin/env bash
+          if [[ "$1" == "is-active" && "$2" == "--quiet" && "$3" == "chatgpt-coder.service" ]]; then
+            exit 0
+          fi
+          exec /usr/bin/systemctl "$@"
+          SH
+          chmod 755 /tmp/active-service-shim/systemctl
+          if sudo env PATH="/tmp/active-service-shim:$PATH" bash research/chatgpt-workspace-qualification/deploy/install-staged.sh > /tmp/refusal.out 2>&1; then
+            echo "FAIL: installer accepted active service" >&2
+            exit 1
+          fi
+          grep -Fq 'Refusing staged installation while chatgpt-coder.service is running' /tmp/refusal.out
+          snapshot > /tmp/post-active-refusal.sha
+          diff -u /tmp/pre-active-refusal.sha /tmp/post-active-refusal.sha
+          echo "PASS: active controller causes refusal and staged service/config hashes remain unchanged."
 
   chatgpt-local-coder:
     name: chatgpt-local-coder upstream tests and unsafe-default assessment
