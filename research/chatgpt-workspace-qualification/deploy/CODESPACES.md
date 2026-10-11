@@ -150,10 +150,30 @@ Interpret `BLOCKER_ROOT` as a writable **parent** directory, and
 could be a symlink). Record only the paths/metadata shown, not the contents
 of any sibling repository. The worker must not be permitted to write
 unrelated checkouts; never apply a mass `chmod` or `setfacl` over
-`/workspaces` or other repos. After diagnosis, decide whether a
-narrow targeted permission adjustment is possible without disrupting other
-users/repositories; otherwise use a separate mount/user-namespace sandbox
-or refuse worker deployment in this Codespace.
+`/workspaces` or other repos. There is a targeted remediation for this host layout: deny only
+`chatgpt-worker` traversal on the **/workspaces parent**, not on any
+sibling or child checkout. Because the allowed worker checkout is entirely
+under `/srv/chatgpt-worker`, this does not remove needed access. The
+script first validates the existing Public-only installation, requires the
+worker to be stopped, saves a root-only snapshot of the current parent ACL,
+and uses `setfacl -n` (preserve the existing ACL mask). It then confirms
+that the Codespace owner can still access Public and that the worker cannot
+read or write sibling workspace paths.
+
+```bash
+cd /workspaces/Public
+git pull --ff-only origin experiments/chatgpt-workspace-qualification
+bash -n research/chatgpt-workspace-qualification/deploy/codespaces-deny-worker-workspaces.sh
+sudo bash research/chatgpt-workspace-qualification/deploy/codespaces-deny-worker-workspaces.sh
+```
+
+**Only after** `PARENT_WORKSPACE_ISOLATION_PASS` may the guarded
+`codespaces-enroll-verify-worker.py` be run again. The previous enrollment
+attempt failed in `host_gate()` before it created an OAuth client, invite,
+worker process, or identity. If a *future* enrollment attempt reaches OAuth
+or enrollment and fails, do not automatically retry: enrollment state might
+have been persisted. If the parent ACL change fails or owner access changes,
+stop and diagnose the existing ACL; do not chmod or change other repositories.
 
 The enrollment preflight now also rejects a writable `/workspaces` parent:
 protecting each existing checkout does not prevent a worker from creating
