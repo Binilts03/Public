@@ -18,6 +18,24 @@ Target repository: Binilts03/Public ONLY. Main baseline 6ba9bfbe230dc21cea01ad9a
 
 This is black-box tool evidence, not production sandbox evidence or Codex parity.
 
+## Continued real qualification (2026-10-11)
+
+- Real RED-GREEN coding task: https://github.com/Binilts03/Public/actions/runs/38148556662 — upstream 403 PASS, independent MCP 15 PASS, 0 FAIL, 1 WARN. The MCP command runner observed a failing Node test (exit 1); MCP patch repaired the implementation; the same Node test passed (exit 0), the diff recorded the change, and the baseline fixture commit stayed unchanged.
+- HTTP security/transport test and RED-GREEN combined: https://github.com/Binilts03/Public/actions/runs/38148631168 — **COMPLETED SUCCESS** at commit e2b0529033d0b76373906a4f152fc1c58326ecb9:
+  - Upstream: 403 PASS, 20 files.
+  - Stdio + real coding: 15 PASS, 0 FAIL, 1 WARN, 0 BLOCKED.
+  - Loopback HTTP: 7 PASS, 0 FAIL, 0 BLOCKED.
+  - HTTP verified: rejected missing/wrong token (401), authorized initialize, tools/list with shell absent by default, authorized file read, blocked traversal, unchanged fixture.
+  - Artifact: https://github.com/Binilts03/Public/actions/runs/38148631168/artifacts/11706325620
+- The historical failed run 38147609182 remains FAILED in GitHub history; its successor run 38147666297 and these later qualifying runs are green. We are not erasing failures or changing gate thresholds.
+- The HTTP check does **not** qualify public HTTPS, OAuth, Secure MCP Tunnel, OS sandbox, independent subagents, restarts, or normal-chat tool invocation.
+
+Official OpenAI guidance checked:
+- https://developers.openai.com/plugins/deploy/connect-chatgpt supports creating a custom MCP server plugin and selecting it in a new ordinary ChatGPT conversation, subject to account policies.
+- https://developers.openai.com/plugins/build/auth describes the OAuth 2.1 model for authenticated MCP plugins.
+- https://developers.openai.com/plugins/build/plugins documents API-key auth in the manifest, but https://developers.openai.com/plugins/deploy/submission states the submission portal connection form does not accept fixed API-key credentials. **Do not assume the current fixed-bearer demo is sufficient for every ChatGPT connection path**.
+- https://developers.openai.com/api/docs/guides/secure-mcp-tunnels documents the private tunnel connection, subject to account and workspace entitlements.
+
 ## Open gates
 
 - Upstream server instructions contain the original maintainer's specific harness stages and skills. Replace before using the user's skills. Observed WARN.
