@@ -42,7 +42,7 @@ def server(env, url, logs):
         executable = ([sys.executable, env["PUBLIC_MCP_LAUNCHER"]] if env.get("PUBLIC_MCP_LAUNCHER")
                       else ["local-shell-mcp"])
         process = subprocess.Popen(
-            [*executable, "--mode", "mcp", "--no-remote"],
+            [*executable, "--mode", "mcp", *([] if env.get("PUBLIC_MCP_ALLOW_REMOTE_TEST")=="1" else ["--no-remote"])],
             env=env, stdin=subprocess.DEVNULL,
             stdout=handle, stderr=subprocess.STDOUT,
         )
