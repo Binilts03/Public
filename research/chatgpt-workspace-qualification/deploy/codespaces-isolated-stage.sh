@@ -17,7 +17,9 @@ CUSER=codespace
 CTRL=chatgpt-controller
 WORKER=chatgpt-worker
 SRC=/home/codespace/.local/share/public-chatgpt-mcp-stage/local-shell-mcp
-UV=
+# System-owned Python 3.12 is the CI-tested major/minor runtime.
+# Avoid executing a Codespace-owned uv binary as root.
+SYSTEM_PY=/usr/bin/python3
 RUNTIME=/opt/public-chatgpt-mcp
 CTRL_ROOT=/srv/chatgpt-controller
 WORKER_ROOT=/srv/chatgpt-worker
@@ -26,25 +28,23 @@ WORKER_ROOT=/srv/chatgpt-worker
 [[ "${SUDO_USER:-}" == "$CUSER" ]] || abort "must be launched by the codespace login via sudo"
 [[ -d "$REPO" ]] || abort "missing repository directory: $REPO"
 [[ -d "$SRC/.git" ]] || abort "missing pinned backend checkout at $SRC; the Stage 1 source was not found"
-# pipx may place executable links outside ~/.local/bin when PIPX_BIN_DIR
-# is customized. Probe known local locations, never silently reinstall.
-for candidate in /home/codespace/.local/bin/uv /usr/local/bin/uv /usr/bin/uv; do
-  if [[ -x "$candidate" ]]; then
-    UV="$candidate"
-    break
-  fi
-done
-if [[ -z "$UV" ]] && command -v pipx >/dev/null 2>&1; then
-  pipx_dir="$(runuser -u "$CUSER" -- env HOME=/home/codespace pipx environment --value PIPX_BIN_DIR 2>/dev/null || true)"
-  case "$pipx_dir" in
-    /home/codespace/*|/usr/local/bin)
-      if [[ -x "$pipx_dir/uv" ]]; then UV="$pipx_dir/uv"; fi
-      ;;
-  esac
+# The Stage 1 uv install proved local MCP compatibility; this root installer
+# must NOT execute the Codespace user's uv, Python, or pipx as root.
+[[ -x "$SYSTEM_PY" ]] || abort "system Python missing at $SYSTEM_PY"
+if ! "$SYSTEM_PY" -c 'import sys; assert sys.version_info[:2] == (3,12)' 2>/dev/null; then
+  abort "$SYSTEM_PY is not Python 3.12; stop before creating system users"
 fi
-[[ -n "$UV" && -x "$UV" ]] ||
-  abort "uv executable not located; in Codespaces run: command -v uv; pipx environment --value PIPX_BIN_DIR"
-printf 'Prerequisites: backend checkout present; uv executable at %s\n' "$UV"
+# Test ensurepip/venv before any persistent mutations so a missing
+# python3.12-venv package cannot leave a half-installed privileged layout.
+probe="$(mktemp -d /tmp/public-mcp-venv-check.XXXXXXXX)"
+if ! "$SYSTEM_PY" -m venv "$probe" >/dev/null 2>&1; then
+  rm -rf -- "$probe"
+  abort "system Python 3.12 venv is unavailable; check python3.12-venv before installation"
+fi
+"$probe/bin/python" -m pip --version >/dev/null ||
+  { rm -rf -- "$probe"; abort "system Python virtualenv has no pip"; }
+rm -rf -- "$probe"
+printf 'Prerequisites: pinned source present, system-owned Python %s and venv/pip available\n' "$("$SYSTEM_PY" --version 2>&1)"
 [[ ! -d /run/systemd/system ]] || abort "dedicated VM installer must be used on systemd hosts"
 for executable in useradd runuser install git openssl; do
   command -v "$executable" >/dev/null || abort "missing $executable"
@@ -85,12 +85,8 @@ install -d -o root -g root -m 0755 "$RUNTIME"
 cp -a "$SRC" "$RUNTIME/source"
 chown -R root:root "$RUNTIME/source"
 [[ "$(git -C "$RUNTIME/source" rev-parse HEAD)" == "$PIN" ]] || abort "copied pin mismatch"
-export UV_PYTHON_INSTALL_DIR="$RUNTIME/pythons"
-export UV_CACHE_DIR="$RUNTIME/uv-cache"
-export UV_PYTHON_PREFERENCE=only-managed
-"$UV" python install 3.12.15
-"$UV" venv --python 3.12.15 "$RUNTIME/venv"
-"$UV" pip install --python "$RUNTIME/venv/bin/python" "$RUNTIME/source"
+"$SYSTEM_PY" -m venv "$RUNTIME/venv"
+"$RUNTIME/venv/bin/python" -m pip install --disable-pip-version-check "$RUNTIME/source"
 "$RUNTIME/venv/bin/python" -c 'import sys,local_shell_mcp; assert sys.version_info[:2]==(3,12)'
 install -o root -g root -m 0755 \
   "$REPO/research/chatgpt-workspace-qualification/deploy/nondumpable_mcp_entrypoint.py" \
