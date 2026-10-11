@@ -20,7 +20,23 @@ ENV_FILE="$ROOT/controller.env"
   abort "run with sudo bash from codespace login"
 [[ -x "$PYTHON" && -r "$ENTRY" && -f "$ENV_FILE" ]] ||
   abort "isolated staging not installed"
+[[ -f /opt/public-chatgpt-mcp/codespaces-isolation-qualified ]] ||
+  abort "isolated Stage 2 was not qualified; run codespaces-qualify-partial.sh before controller startup"
+[[ "$(stat -c '%U:%a' /opt/public-chatgpt-mcp/codespaces-isolation-qualified)" == root:600 ]] ||
+  abort "isolation qualification evidence is not root-owned and private"
 [[ "$(id -u "$CTRL")" != "$(id -u "$WORKER")" ]] || abort "controller and worker are not distinct UIDs"
+runuser -u "$WORKER" -- test ! -x /workspaces/Public ||
+  abort "worker can traverse original Codespaces checkout; isolation invalid"
+runuser -u "$WORKER" -- test ! -w /workspaces/Public ||
+  abort "worker can write to original Codespaces checkout; isolation invalid"
+runuser -u "$WORKER" -- test ! -r /workspaces/Public/.git/config ||
+  abort "worker can read original Codespaces Git config; isolation invalid"
+for socket in /var/run/docker.sock /run/docker.sock; do
+  if [[ -e "$socket" ]]; then
+    runuser -u "$WORKER" -- test ! -r "$socket" ||
+      abort "worker can access privileged Docker socket"
+  fi
+done
 [[ $# == 1 && "$1" =~ ^[a-z0-9][a-z0-9-]{3,100}$ ]] ||
   abort "supply the Codespace name via \"\$CODESPACE_NAME\"; do not supply a URL"
 PUBLIC_BASE="https://$1-8765.app.github.dev"
