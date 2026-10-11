@@ -4,11 +4,6 @@ on:
   push:
     branches:
       - experiments/chatgpt-workspace-qualification
-    paths:
-      - research/chatgpt-workspace-qualification/candidate_fwerkor.py
-      - research/chatgpt-workspace-qualification/candidate_fwerkor_oauth.py
-      - research/chatgpt-workspace-qualification/local-shell-mcp.env.example
-      - .github/workflows/compare-remote-coding-mcp.yml
 
 permissions:
   contents: read
