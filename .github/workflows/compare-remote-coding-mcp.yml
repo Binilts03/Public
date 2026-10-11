@@ -105,6 +105,21 @@ jobs:
       - name: Static staged-package contract
         run: |
           python3 research/chatgpt-workspace-qualification/deploy/validate_staging.py
+      - name: Static Codespaces bootstrap syntax and no-live-deploy contract
+        run: |
+          bash -n research/chatgpt-workspace-qualification/deploy/codespaces-stage.sh
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('research/chatgpt-workspace-qualification/deploy/codespaces-stage.sh').read_text()
+          assert 'dec01b9f50f966097ddfc84d357d12a52f238935' in s
+          assert 'candidate_fwerkor.py' in s
+          assert 'NO_PUBLIC_ENDPOINT' in s
+          assert '[[ "$(id -un)" == codespace ]]' in s
+          assert 'git -C "$ROOT" status --porcelain' in s
+          for banned in ('systemctl start','systemctl enable','gh codespace ports visibility','docker run', 'sudo bash'):
+              assert banned not in s,banned
+          print('PASS: Codespaces bootstrap is syntax-valid and staging-only')
+          PY
       - name: Execute installer on EPHEMERAL GitHub-hosted Ubuntu
         run: |
           sudo bash research/chatgpt-workspace-qualification/deploy/install-staged.sh
