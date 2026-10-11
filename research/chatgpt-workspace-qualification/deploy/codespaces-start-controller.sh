@@ -30,11 +30,11 @@ fi
 # Replace only the preconfigured URL field; preserve controller-only secrets.
 # Do not reuse OAuth clients if switching origins without an operator review.
 configured="$(grep '^LOCAL_SHELL_MCP_PUBLIC_BASE_URL=' "$ENV_FILE" || true)"
-case "$configured" in
-  'LOCAL_SHELL_MCP_PUBLIC_BASE_URL=https://REPLACE-WITH-AUTHORIZED-HOST.invalid'|
-  "LOCAL_SHELL_MCP_PUBLIC_BASE_URL=$PUBLIC_BASE") ;;
-  *) abort "controller is configured for a different origin; manual review required";;
-esac
+placeholder='LOCAL_SHELL_MCP_PUBLIC_BASE_URL=https://REPLACE-WITH-AUTHORIZED-HOST.invalid'
+target="LOCAL_SHELL_MCP_PUBLIC_BASE_URL=$PUBLIC_BASE"
+if [[ "$configured" != "$placeholder" && "$configured" != "$target" ]]; then
+  abort "controller is configured for a different origin; manual review required"
+fi
 if [[ "$configured" != "LOCAL_SHELL_MCP_PUBLIC_BASE_URL=$PUBLIC_BASE" ]]; then
   temp="$(mktemp "$ROOT/controller.env.XXXXXXXX")"
   sed "s|^LOCAL_SHELL_MCP_PUBLIC_BASE_URL=.*$|LOCAL_SHELL_MCP_PUBLIC_BASE_URL=$PUBLIC_BASE|" "$ENV_FILE" > "$temp"
