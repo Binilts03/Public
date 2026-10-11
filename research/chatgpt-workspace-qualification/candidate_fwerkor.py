@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import tempfile
 import sys
+import traceback
 
 
 def assert_good(result, name):
@@ -46,7 +47,9 @@ async def scenario(root: Path):
     report = [{"gate":"Tools discovered","status":"PASS","detail":len(names)}]
 
     async def call(name, payload):
-        _, response = await mcp.call_tool(name, payload)
+        result = await mcp.call_tool(name, payload)
+        assert isinstance(result, (tuple, list)) and len(result) == 2, (name, type(result).__name__, str(result)[:500])
+        _, response = result
         return assert_good(response, name)
 
     listed = await call("skill_list", {})
@@ -100,7 +103,7 @@ def main():
             items=asyncio.run(scenario(Path(tmp)))
         except BaseException as error:
             items=locals().get("items",[])
-            items.append({"gate":"Candidate integration","status":"FAIL","detail":repr(error)})
+            items.append({"gate":"Candidate integration","status":"FAIL","detail":traceback.format_exc()[-4000:]})
         counts={x:sum(item["status"]==x for item in items) for x in ("PASS","FAIL")}
         report={"schema":"public-candidate-check/v1","candidate":"fwerkor/local-shell-mcp",
                 "boundary":"Disposable in-process tools only: no OAuth HTTP connection, no production sandbox, no normal-chat plugin invocation",
