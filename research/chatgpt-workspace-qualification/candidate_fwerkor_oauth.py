@@ -63,7 +63,7 @@ def main():
                            "clientInfo":{"name":"independent-oauth-gate","version":"1"}}}
         headers={"Content-Type":"application/json","Accept":"application/json, text/event-stream",
                  "MCP-Protocol-Version":"2025-06-18"}
-        with TestClient(app) as client:
+        with TestClient(app, base_url="https://workspace-test.example.invalid") as client:
             metadata=client.get("/.well-known/oauth-authorization-server")
             assert metadata.status_code==200,(metadata.status_code,metadata.text[:400])
             meta=metadata.json()
