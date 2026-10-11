@@ -127,6 +127,7 @@ jobs:
           bash -n research/chatgpt-workspace-qualification/deploy/codespaces-qualify-partial.sh
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/codespaces-diagnose-controller.py
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/codespaces-repair-runtime.py
+          python3 -m py_compile research/chatgpt-workspace-qualification/deploy/codespaces-enroll-verify-worker.py
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/tests/test_codespaces_runtime_permissions.py
           python3 - <<'PY'
           from pathlib import Path
@@ -168,6 +169,24 @@ jobs:
                            'codespaces-isolation-qualified',
                            'runuser -u "$WORKER" -- test ! -r "$socket"'):
               assert required in recovery,required
+          attest=(root/'codespaces-enroll-verify-worker.py').read_text()
+          for required in ('LOCAL_OAUTH_PKCE_PASS', 'LOCAL_MCP_CONTROL_PLANE_PASS',
+                           'WORKER_ENROLLMENT_AND_REMOTE_SHELL_PASS',
+                           'PORT_VISIBILITY_UNCHANGED', 'NO_GIT_WRITES_NO_SECRETS_PRINTED',
+                           'LOCAL_SHELL_MCP_AUTH_MODE": "none"',
+                           'spawn_worker(invite)', 'start_new_session=True',
+                           'os.killpg(p.pid, signal.SIGTERM)',
+                           'oauth-token',):
+              if required == 'oauth-token':
+                  assert '"/oauth/token"' in attest
+              else:
+                  assert required in attest,required
+          assert '--invite-stdin' in attest and '--invite", ' not in attest
+          assert 'https://' in attest and 'app.github.dev' in attest
+          assert 'WORKER_PROCESS_PID' in attest
+          assert 'remote_manage' in attest and 'run_shell' in attest
+          assert 'gh codespace ports visibility' not in attest
+          assert 'git push' not in attest
           assert 'codespaces-isolation-qualified' in launch
           assert 'worker can traverse original Codespaces checkout' in launch
           assert 'worker can write to original Codespaces checkout' in launch
