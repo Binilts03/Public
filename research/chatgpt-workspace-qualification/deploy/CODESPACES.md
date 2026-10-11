@@ -127,6 +127,38 @@ have been persisted. Preserve it and diagnose separately; never wipe
 `/srv/chatgpt-worker/state` or regenerate the controller OAuth secret to
 make a failing test pass.
 
+## Interpreting a worker-access failure under /workspaces
+
+A real Codespaces run passed `LOCAL_CONTROLLER_GATE_PASS` but the live
+enrollment script stopped at `BLOCKED: worker can write another workspace`
+before obtaining an OAuth token or inviting a worker.
+
+This is a host-access denial, not an indication of missing Python
+dependencies. **Do not rerun enrollment or modify ACLs on other repositories.**
+Use the read-only inventory below, which probes `/workspaces` and immediate
+entries only; it reads no Git files, no credentials and no directory contents:
+
+```bash
+cd /workspaces/Public
+git pull --ff-only origin experiments/chatgpt-workspace-qualification
+python3 -m py_compile research/chatgpt-workspace-qualification/deploy/codespaces-diagnose-workspaces.py
+sudo python3 research/chatgpt-workspace-qualification/deploy/codespaces-diagnose-workspaces.py
+```
+
+Interpret `BLOCKER_ROOT` as a writable **parent** directory, and
+`BLOCKER_SIBLING` as an independently writable immediate child (which
+could be a symlink). Record only the paths/metadata shown, not the contents
+of any sibling repository. The worker must not be permitted to write
+unrelated checkouts; never apply a mass `chmod` or `setfacl` over
+`/workspaces` or other repos. After diagnosis, decide whether a
+narrow targeted permission adjustment is possible without disrupting other
+users/repositories; otherwise use a separate mount/user-namespace sandbox
+or refuse worker deployment in this Codespace.
+
+The enrollment preflight now also rejects a writable `/workspaces` parent:
+protecting each existing checkout does not prevent a worker from creating
+new entries within a writable parent.
+
 ## Public ingress is an additional user-controlled security gate
 
 Do **not** make Codespaces port 8765 public until the two results above and a host-identity review pass. GitHub's private forwarded-port authentication is not automatically compatible with ChatGPT's MCP OAuth client. A public forwarded port has no GitHub authentication; rely on the MCP OAuth boundary only after external discovery/authentication/negative tests succeed.
