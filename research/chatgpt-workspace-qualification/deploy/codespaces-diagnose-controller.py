@@ -51,7 +51,8 @@ def describe_log() -> None:
     data = LOG.read_bytes()
     print(f"private_log: PRESENT bytes={len(data)}")
     # Only emit fixed, predefined reason labels. NEVER output log substrings.
-    text = data.decode("utf-8", errors="replace").lower()[-500_000:]
+    raw_text = data.decode("utf-8", errors="replace")[-500_000:]
+    text = raw_text.lower()
     hints = {
         "invalid_runtime_import": "modulenotfounderror",
         "permission_denied": "permissionerror",
