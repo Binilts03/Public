@@ -118,8 +118,8 @@ jobs:
           test "$(sudo stat -c '%U:%a' /etc/chatgpt-coder/controller.env)" = "root:600"
           test "$(sudo stat -c '%U:%a' /etc/chatgpt-coder/worker.env)" = "root:600"
           ! sudo grep -Eq '^(LOCAL_SHELL_MCP_OAUTH_|.*JWT_SECRET=|.*ADMIN_PIN=)' /etc/chatgpt-coder/worker.env
-          grep -qx 'LOCAL_SHELL_MCP_DISABLE_LOCAL=true' /etc/chatgpt-coder/controller.env
-          grep -qx 'LOCAL_SHELL_MCP_REMOTE_ENABLED=true' /etc/chatgpt-coder/controller.env
+          sudo grep -qx 'LOCAL_SHELL_MCP_DISABLE_LOCAL=true' /etc/chatgpt-coder/controller.env
+          sudo grep -qx 'LOCAL_SHELL_MCP_REMOTE_ENABLED=true' /etc/chatgpt-coder/controller.env
           sudo -u chatgpt-worker git -C /srv/chatgpt-worker/worktrees/Public status --porcelain
           test "$(sudo -u chatgpt-worker git -C /srv/chatgpt-worker/git/Public remote get-url --push origin)" = "no-push://disabled"
           test "$(sudo git -C /opt/chatgpt-coder/source rev-parse HEAD)" = dec01b9f50f966097ddfc84d357d12a52f238935
