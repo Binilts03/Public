@@ -100,6 +100,8 @@ def run(server):
         (root/"src").mkdir()
         (root/"src/example.js").write_text("export const value = 41;\n")
         (root/"README.md").write_text("original heading\n")
+        (root/"calc.mjs").write_text("export function add(a, b) { return a + b + 1; }\n")
+        (root/"calc.test.mjs").write_text("import { test } from 'node:test';\nimport { strict as assert } from 'node:assert';\nimport { add } from './calc.mjs';\ntest('adds correctly', () => assert.equal(add(2,3),5));\n")
         git(root,"init","-q","-b","fixture")
         git(root,"add",".")
         git(root,"-c","user.name=Test","-c","user.email=test@example.invalid","commit","-qm","baseline")
@@ -153,6 +155,17 @@ def run(server):
                 gate("Git diff",lambda:success(client.call("git_diff"),"value = 42"))
                 gate("Git status",lambda:success(client.call("git_status"),"example.js"))
                 gate("Shell executes Node",lambda:success(client.call("run_command",command=["node","--version"]),"exit code: 0"))
+                def repair_red_green():
+                    red=success(client.call("run_command",command=["node","--test","calc.test.mjs"]))
+                    assert "exit code: 1" in red, "Expected actual RED test, got: "+red[:400]
+                    success(client.call("patch",edits=[{"path":"calc.mjs","oldString":"a + b + 1","newString":"a + b"}]))
+                    green=success(client.call("run_command",command=["node","--test","calc.test.mjs"]))
+                    assert "exit code: 0" in green, "Test remained failing: "+green[:400]
+                    assert "a + b;" in (root/"calc.mjs").read_text()
+                    assert "return a + b + 1" in subprocess.run(["git","show","HEAD:calc.mjs"],cwd=root,check=True,capture_output=True,text=True).stdout
+                    assert "calc.mjs" in success(client.call("git_diff"))
+                    return "RED exit 1; patched via MCP; GREEN exit 0; baseline HEAD unchanged"
+                gate("Real RED-GREEN repair through MCP",repair_red_green)
                 def background():
                     result=success(client.call("start_job",command=["node","-e","setTimeout(()=>console.log('JOB_DONE'),250)"],name="fixture-background"))
                     match=re.search(r"jobId:\s*(\S+)",result)
