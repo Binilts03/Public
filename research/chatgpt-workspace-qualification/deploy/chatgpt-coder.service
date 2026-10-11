@@ -1,19 +1,19 @@
 [Unit]
-Description=ChatGPT isolated coding workspace (local-shell-mcp)
+Description=ChatGPT OAuth MCP controller (NO local coding tools)
 Documentation=https://github.com/fwerkor/local-shell-mcp
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=chatgpt-coder
-Group=chatgpt-coder
-WorkingDirectory=/srv/chatgpt-coder/worktrees/Public
-Environment=HOME=/srv/chatgpt-coder/home
-Environment=XDG_CONFIG_HOME=/srv/chatgpt-coder/home/.config
+User=chatgpt-controller
+Group=chatgpt-controller
+WorkingDirectory=/srv/chatgpt-controller
+Environment=HOME=/srv/chatgpt-controller/home
+Environment=XDG_CONFIG_HOME=/srv/chatgpt-controller/home/.config
 Environment=PYTHONDONTWRITEBYTECODE=1
-EnvironmentFile=/etc/chatgpt-coder/runtime.env
-ExecStart=/opt/chatgpt-coder/venv/bin/python /opt/chatgpt-coder/nondumpable_mcp_entrypoint.py --mode mcp --no-remote
+EnvironmentFile=/etc/chatgpt-coder/controller.env
+ExecStart=/opt/chatgpt-coder/venv/bin/python /opt/chatgpt-coder/nondumpable_mcp_entrypoint.py --mode mcp --remote
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=20
@@ -24,7 +24,7 @@ PrivateTmp=true
 PrivateDevices=true
 ProtectHome=true
 ProtectSystem=strict
-ReadWritePaths=/srv/chatgpt-coder
+ReadWritePaths=/srv/chatgpt-controller
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectKernelLogs=true
@@ -38,7 +38,7 @@ AmbientCapabilities=
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 LimitNOFILE=8192
 TasksMax=256
-MemoryMax=8G
+MemoryMax=2G
 
 [Install]
 WantedBy=multi-user.target
