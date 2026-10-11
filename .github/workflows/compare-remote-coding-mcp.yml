@@ -140,6 +140,13 @@ jobs:
                            'http_code" == 401','nondumpable_mcp_entrypoint.py',
                            'CONTROLLER_ONLY'):
               assert required in launch,required
+          for required in ('SYSTEM_PY=/usr/bin/python3','"$SYSTEM_PY" -m venv "$probe"',
+                           '"$SYSTEM_PY" -m venv "$RUNTIME/venv"',
+                           '"$RUNTIME/venv/bin/python" -m pip install'):
+              assert required in stage,required
+          assert 'uv executable not located' not in stage
+          assert '"$UV" python install' not in stage
+          assert stage.index('"$SYSTEM_PY" -m venv "$probe"') < stage.index('useradd --system --user-group')
           for banned in ('gh codespace ports visibility','systemctl start','systemctl enable','docker run'):
               assert banned not in stage and banned not in launch,banned
           assert 'remote_worker' not in launch
