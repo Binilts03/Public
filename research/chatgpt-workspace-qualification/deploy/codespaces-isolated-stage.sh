@@ -36,8 +36,10 @@ case "$(gitu remote get-url origin)" in
 esac
 [[ "$(gitu branch --show-current)" == "$EXPECTED" ]] || abort "wrong qualification branch"
 [[ -z "$(gitu status --porcelain)" ]] || abort "dirty workspace; no reset or overwrite performed"
-[[ "$(git -C "$SRC" rev-parse HEAD)" == "$PIN" ]] || abort "upstream backend SHA mismatch"
-[[ -z "$(git -C "$SRC" status --porcelain)" ]] || abort "backend source modified"
+[[ "$(runuser -u "$CUSER" -- git -C "$SRC" rev-parse HEAD)" == "$PIN" ]] ||
+  abort "upstream backend SHA mismatch"
+[[ -z "$(runuser -u "$CUSER" -- git -C "$SRC" status --porcelain)" ]] ||
+  abort "backend source modified"
 [[ ! -e "$RUNTIME" && ! -e "$CTRL_ROOT" && ! -e "$WORKER_ROOT" ]] ||
   abort "an installation already exists; refusing to modify live or partial state"
 
