@@ -58,8 +58,8 @@ class Client:
         x=self.request("initialize",{"protocolVersion":PROTOCOL,"capabilities":{},"clientInfo":{"name":"public-qualification","version":"1"}})
         self.send({"jsonrpc":"2.0","method":"notifications/initialized"})
         return x
-    def call(self,name,**kwargs):
-        return self.request("tools/call",{"name":name,"arguments":kwargs})
+    def call(self,tool_name,**kwargs):
+        return self.request("tools/call",{"name":tool_name,"arguments":kwargs})
     def __exit__(self,*_):
         if self.proc.poll() is None:
             self.proc.terminate()
