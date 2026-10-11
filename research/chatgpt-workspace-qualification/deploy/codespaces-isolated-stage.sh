@@ -139,6 +139,14 @@ runuser -u "$WORKER" -- test ! -r "$CTRL_ROOT/controller.env" ||
   abort "worker can read controller OAuth configuration"
 runuser -u "$CTRL" -- test ! -r "$WORKER_ROOT/worker.env" ||
   abort "controller can read worker state"
+runuser -u "$WORKER" -- test ! -w "$REPO" ||
+  abort "worker can write to the original Codespaces worktree"
+for protected in /home/codespace/.config/gh/hosts.yml /home/codespace/.git-credentials /home/codespace/.ssh/id_ed25519; do
+  if [[ -e "$protected" ]]; then
+    runuser -u "$WORKER" -- test ! -r "$protected" ||
+      abort "worker can read Codespaces private account material"
+  fi
+done
 for socket in /var/run/docker.sock /run/docker.sock; do
   if [[ -e "$socket" ]]; then
     runuser -u "$WORKER" -- test ! -r "$socket" ||
