@@ -140,7 +140,7 @@ async def tool_session(url, token, operation, session_id=None):
         async with streamablehttp_client(url+"/mcp",http_client=http) as streams:
             async with ClientSession(streams[0], streams[1]) as client:
                 init=await client.initialize()
-                assert init.serverInfo.name or init.server_info.name
+                assert init.server_info.name
                 listed=await client.list_tools()
                 names={x.name for x in listed.tools}
                 assert {"session_manage","skill_list","skill_load","file_read"}<=names
