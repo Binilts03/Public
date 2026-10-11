@@ -1,0 +1,44 @@
+[Unit]
+Description=ChatGPT Public-only coding worker (NO controller OAuth credentials)
+Documentation=https://github.com/fwerkor/local-shell-mcp
+After=network-online.target chatgpt-coder.service
+Requires=chatgpt-coder.service
+
+[Service]
+Type=simple
+User=chatgpt-worker
+Group=chatgpt-worker
+WorkingDirectory=/srv/chatgpt-worker/worktrees/Public
+Environment=HOME=/srv/chatgpt-worker/home
+Environment=XDG_CONFIG_HOME=/srv/chatgpt-worker/home/.config
+Environment=PYTHONDONTWRITEBYTECODE=1
+EnvironmentFile=/etc/chatgpt-coder/worker.env
+ExecStart=/opt/chatgpt-coder/venv/bin/local-shell-mcp worker run
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/srv/chatgpt-worker
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LimitNOFILE=8192
+TasksMax=512
+MemoryMax=8G
+
+[Install]
+WantedBy=multi-user.target
