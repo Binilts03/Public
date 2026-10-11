@@ -66,11 +66,23 @@ grep -qx 'LOCAL_SHELL_MCP_AUTH_BYPASS_LOCALHOST=false' "$ENV_FILE" ||
   abort "OAuth localhost bypass must remain disabled"
 runuser -u "$WORKER" -- test ! -r "$ENV_FILE" ||
   abort "worker can access controller credentials"
+# Real runtime access is mandatory; root executable checks are insufficient.
+if ! runuser -u "$CTRL" -- env -i HOME="$ROOT/home" \
+  PATH=/opt/public-chatgpt-mcp/venv/bin:/usr/bin:/bin \
+  PYTHONDONTWRITEBYTECODE=1 "$PYTHON" -c 'import local_shell_mcp.main' \
+  >/dev/null 2>&1; then
+  abort "controller cannot import backend runtime; run codespaces-repair-runtime.py"
+fi
 if ss -ltn 2>/dev/null | grep -Eq '(:8765)[[:space:]]'; then
   abort "port 8765 already has a listener"
 fi
 
-install -o "$CTRL" -g "$CTRL" -m 0600 /dev/null "$ROOT/logs/controller.log"
+if [[ -e "$ROOT/logs/controller.log" ]]; then
+  [[ "$(stat -c '%U:%a' "$ROOT/logs/controller.log")" == "$CTRL:600" ]] ||
+    abort "controller log permissions unexpected; preserve it for audit"
+else
+  install -o "$CTRL" -g "$CTRL" -m 0600 /dev/null "$ROOT/logs/controller.log"
+fi
 echo "Starting OAuth controller on 127.0.0.1:8765 (no worker; no port visibility changes)"
 runuser -u "$CTRL" -- env -i \
   HOME="$ROOT/home" XDG_CONFIG_HOME="$ROOT/home/.config" \
