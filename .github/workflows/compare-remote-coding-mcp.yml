@@ -124,6 +124,7 @@ jobs:
         run: |
           bash -n research/chatgpt-workspace-qualification/deploy/codespaces-isolated-stage.sh
           bash -n research/chatgpt-workspace-qualification/deploy/codespaces-start-controller.sh
+          bash -n research/chatgpt-workspace-qualification/deploy/codespaces-qualify-partial.sh
           python3 - <<'PY'
           from pathlib import Path
           root=Path('research/chatgpt-workspace-qualification/deploy')
@@ -150,8 +151,43 @@ jobs:
           for banned in ('gh codespace ports visibility','systemctl start','systemctl enable','docker run'):
               assert banned not in stage and banned not in launch,banned
           assert 'remote_worker' not in launch
-          print('PASS: Codespaces staged two-UID security contract and OAuth controller-only startup')
+          recovery=(root/'codespaces-qualify-partial.sh').read_text()
+          for required in ('setfacl -m "u:$WORKER:---" "$REPO"',
+                           'getfacl -p "$REPO" > "$backup"',
+                           'PARTIAL_STAGE_RECOVERED_PASS',
+                           'HOST_NOT_EXPOSED', 'runuser -u "$WORKER" -- test ! -x "$REPO"',
+                           'runuser -u "$WORKER" -- test ! -w "$REPO"',
+                           'codespaces-isolation-qualified',
+                           'runuser -u "$WORKER" -- test ! -r "$socket"'):
+              assert required in recovery,required
+          assert 'codespaces-isolation-qualified' in launch
+          assert 'worker can traverse original Codespaces checkout' in launch
+          assert 'worker can write to original Codespaces checkout' in launch
+          print('PASS: Codespaces staged two-UID security contract, partial recovery, and OAuth controller-only startup')
           PY
+      - name: Exercise worker-deny ACL on disposable Ubuntu fixture
+        run: |
+          set -euo pipefail
+          if ! command -v setfacl >/dev/null || ! command -v getfacl >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y acl
+          fi
+          user="public-acl-ci-probe"
+          sudo useradd --system --user-group "$user"
+          fixture="$(mktemp -d /tmp/public-acl-ci.XXXXXXXX)"
+          sudo chown "$USER:$USER" "$fixture"
+          chmod 0777 "$fixture"
+          sudo -u "$user" test -w "$fixture"
+          sudo -u "$user" test -x "$fixture"
+          sudo setfacl -m "u:$user:---" "$fixture"
+          ! sudo -u "$user" test -w "$fixture"
+          ! sudo -u "$user" test -x "$fixture"
+          ! sudo -u "$user" test -r "$fixture"
+          test -w "$fixture"
+          sudo userdel "$user"
+          rm -rf -- "$fixture"
+          echo "PASS: targeted Linux ACL denies low-privilege worker without disabling workspace owner"
+
       - name: Execute installer on EPHEMERAL GitHub-hosted Ubuntu
         run: |
           sudo bash research/chatgpt-workspace-qualification/deploy/install-staged.sh
