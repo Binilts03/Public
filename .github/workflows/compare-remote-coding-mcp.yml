@@ -6,6 +6,8 @@ on:
       - experiments/chatgpt-workspace-qualification
     paths:
       - research/chatgpt-workspace-qualification/candidate_fwerkor.py
+      - research/chatgpt-workspace-qualification/candidate_fwerkor_oauth.py
+      - research/chatgpt-workspace-qualification/local-shell-mcp.env.example
       - .github/workflows/compare-remote-coding-mcp.yml
 
 permissions:
@@ -47,6 +49,11 @@ jobs:
           REPORT_PATH: /tmp/candidate-fwerkor.json
         run: |
           python research/chatgpt-workspace-qualification/candidate_fwerkor.py
+      - name: Validate restricted OAuth MCP profile
+        if: success()
+        run: |
+          python research/chatgpt-workspace-qualification/candidate_fwerkor_oauth.py \
+            research/chatgpt-workspace-qualification/local-shell-mcp.env.example
       - name: Retain evidence even on failure
         if: always()
         uses: actions/upload-artifact@v4
@@ -54,6 +61,7 @@ jobs:
           name: candidate-fwerkor-evidence
           path: |
             /tmp/candidate-fwerkor.json
+            /tmp/candidate-fwerkor-oauth.json
             /tmp/local-shell-regression.xml
           retention-days: 14
           if-no-files-found: warn
