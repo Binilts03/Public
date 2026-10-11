@@ -39,8 +39,10 @@ def challenge(verifier):
 @contextmanager
 def server(env, url, logs):
     with open(logs, "a", encoding="utf-8") as handle:
+        executable = ([sys.executable, env["PUBLIC_MCP_LAUNCHER"]] if env.get("PUBLIC_MCP_LAUNCHER")
+                      else ["local-shell-mcp"])
         process = subprocess.Popen(
-            ["local-shell-mcp", "--mode", "mcp", "--no-remote"],
+            [*executable, "--mode", "mcp", "--no-remote"],
             env=env, stdin=subprocess.DEVNULL,
             stdout=handle, stderr=subprocess.STDOUT,
         )
