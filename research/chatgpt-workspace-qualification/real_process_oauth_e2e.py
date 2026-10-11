@@ -22,7 +22,7 @@ from urllib.parse import parse_qs, urlsplit
 import httpx
 import jwt
 from mcp import ClientSession
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import streamable_http_client
 
 
 def port_available():
@@ -137,7 +137,7 @@ def oauth_login(url, admin_pin, jwt_secret):
 async def tool_session(url, token, operation, session_id=None):
     headers={"Authorization":"Bearer "+token}
     async with httpx.AsyncClient(headers=headers,timeout=httpx.Timeout(20,read=90)) as http:
-        async with streamablehttp_client(url+"/mcp",http_client=http) as streams:
+        async with streamable_http_client(url+"/mcp",http_client=http) as streams:
             async with ClientSession(streams[0], streams[1]) as client:
                 init=await client.initialize()
                 assert init.server_info.name
