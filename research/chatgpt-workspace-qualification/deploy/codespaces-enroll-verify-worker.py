@@ -138,10 +138,14 @@ def host_gate():
             "worker can read controller OAuth credential file")
     require(not as_user(CTRL_USER, ["test", "-r", str(WORKER_CONFIG)]),
             "controller can read worker configuration")
+    # A worker with write access to /workspaces can create new sibling paths
+    # even if every existing sibling is separately protected.
+    require(not as_user(WORKER_USER, ["test", "-w", "/workspaces"]),
+            "worker can write /workspaces root; run codespaces-diagnose-workspaces.py")
     for other in Path("/workspaces").iterdir():
         if other.is_dir() and other != ORIGINAL:
             require(not as_user(WORKER_USER, ["test", "-w", str(other)]),
-                    "worker can write another workspace")
+                    "worker can write another workspace; run codespaces-diagnose-workspaces.py")
     source = Path("/opt/public-chatgpt-mcp/source")
     require(subprocess.check_output(
         ["git", "-C", str(source), "rev-parse", "HEAD"], text=True).strip() ==
