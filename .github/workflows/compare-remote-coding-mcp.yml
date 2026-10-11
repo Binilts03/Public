@@ -49,6 +49,12 @@ jobs:
         run: |
           python research/chatgpt-workspace-qualification/candidate_fwerkor_oauth.py \
             research/chatgpt-workspace-qualification/local-shell-mcp.env.example
+      - name: Real OAuth PKCE MCP and process-restart E2E
+        if: success()
+        env:
+          E2E_REPORT: /tmp/public-real-process-e2e.json
+        run: |
+          python research/chatgpt-workspace-qualification/real_process_oauth_e2e.py
       - name: Retain evidence even on failure
         if: always()
         uses: actions/upload-artifact@v4
@@ -57,6 +63,7 @@ jobs:
           path: |
             /tmp/candidate-fwerkor.json
             /tmp/candidate-fwerkor-oauth.json
+            /tmp/public-real-process-e2e.json
             /tmp/local-shell-regression.xml
           retention-days: 14
           if-no-files-found: warn
