@@ -17,14 +17,34 @@ CUSER=codespace
 CTRL=chatgpt-controller
 WORKER=chatgpt-worker
 SRC=/home/codespace/.local/share/public-chatgpt-mcp-stage/local-shell-mcp
-UV=/home/codespace/.local/bin/uv
+UV=
 RUNTIME=/opt/public-chatgpt-mcp
 CTRL_ROOT=/srv/chatgpt-controller
 WORKER_ROOT=/srv/chatgpt-worker
 
 [[ "$EUID" == 0 ]] || abort "requires sudo bash"
 [[ "${SUDO_USER:-}" == "$CUSER" ]] || abort "must be launched by the codespace login via sudo"
-[[ -d "$REPO" && -x "$UV" && -d "$SRC/.git" ]] || abort "run codespaces-stage.sh first"
+[[ -d "$REPO" ]] || abort "missing repository directory: $REPO"
+[[ -d "$SRC/.git" ]] || abort "missing pinned backend checkout at $SRC; the Stage 1 source was not found"
+# pipx may place executable links outside ~/.local/bin when PIPX_BIN_DIR
+# is customized. Probe known local locations, never silently reinstall.
+for candidate in /home/codespace/.local/bin/uv /usr/local/bin/uv /usr/bin/uv; do
+  if [[ -x "$candidate" ]]; then
+    UV="$candidate"
+    break
+  fi
+done
+if [[ -z "$UV" ]] && command -v pipx >/dev/null 2>&1; then
+  pipx_dir="$(runuser -u "$CUSER" -- env HOME=/home/codespace pipx environment --value PIPX_BIN_DIR 2>/dev/null || true)"
+  case "$pipx_dir" in
+    /home/codespace/*|/usr/local/bin)
+      if [[ -x "$pipx_dir/uv" ]]; then UV="$pipx_dir/uv"; fi
+      ;;
+  esac
+fi
+[[ -n "$UV" && -x "$UV" ]] ||
+  abort "uv executable not located; in Codespaces run: command -v uv; pipx environment --value PIPX_BIN_DIR"
+printf 'Prerequisites: backend checkout present; uv executable at %s\n' "$UV"
 [[ ! -d /run/systemd/system ]] || abort "dedicated VM installer must be used on systemd hosts"
 for executable in useradd runuser install git openssl; do
   command -v "$executable" >/dev/null || abort "missing $executable"
