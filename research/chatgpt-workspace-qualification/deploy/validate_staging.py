@@ -23,6 +23,7 @@ assert unit["Service"]["ProtectSystem"]=="strict"
 assert unit["Service"]["KillMode"]=="control-group"
 assert unit["Service"]["CapabilityBoundingSet"]==""
 text=installer.read_text()
+assert 'dirname -- "$0"' in text, "installer must locate its own payload directory"
 assert "https://github.com/Binilts03/Public.git" in text
 assert 'no-push://disabled' in text
 assert 'systemctl daemon-reload' in text
