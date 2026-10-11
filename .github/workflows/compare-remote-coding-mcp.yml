@@ -150,6 +150,11 @@ jobs:
               assert required in stage,required
           assert 'uv executable not located' not in stage
           assert '"$UV" python install' not in stage
+          assert 'umask 022' in stage
+          assert 'controller cannot import staged root-owned Python runtime' in stage
+          assert 'worker cannot import staged root-owned Python runtime' in stage
+          assert 'codespaces-repair-runtime.py' in launch
+          assert 'controller cannot import backend runtime' in launch
           assert stage.index('"$SYSTEM_PY" -m venv "$probe"') < stage.index('useradd --system --user-group')
           for banned in ('gh codespace ports visibility','systemctl start','systemctl enable','docker run'):
               assert banned not in stage and banned not in launch,banned
