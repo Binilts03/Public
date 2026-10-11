@@ -19,6 +19,7 @@ import time
 import httpx
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from real_process_oauth_e2e import port_available, server, oauth_login
 
 WORKER_USER="public-mcp-worker-ci"
