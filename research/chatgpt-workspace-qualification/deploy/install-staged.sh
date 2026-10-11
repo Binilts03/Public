@@ -24,6 +24,15 @@ for name in nondumpable_mcp_entrypoint.py chatgpt-coder.service chatgpt-worker.s
 done
 [[ -d /run/systemd/system ]] || { echo "Requires systemd as the host init system" >&2; exit 5; }
 
+# Do not replace binaries, unit files, or configuration beneath a running service.
+# A live upgrade requires its own audited stop/migration/rollback procedure.
+for unit in chatgpt-coder.service chatgpt-worker.service; do
+  if systemctl is-active --quiet "$unit"; then
+    echo "Refusing staged installation while $unit is running; use an audited maintenance procedure." >&2
+    exit 10
+  fi
+done
+
 # Fail closed if the OLD one-user layout is present. Do not silently migrate secrets.
 if [[ -e "$CONFIG_DIR/runtime.env" || -d /srv/chatgpt-coder ]]; then
   echo "Legacy single-UID installation detected; manual audit/removal required." >&2
