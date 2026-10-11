@@ -57,6 +57,9 @@ assert "LOCAL_SHELL_MCP_OAUTH_JWT_SECRET=$JWT_SECRET" in text
 assert 'grep -Eqi' in text
 assert "REPLACE-WITH-AUTHORIZED-HOST.invalid" in text
 assert "systemctl daemon-reload" in text
+assert 'systemctl is-active --quiet "$unit"' in text
+assert 'for unit in chatgpt-coder.service chatgpt-worker.service; do' in text
+assert text.index('systemctl is-active --quiet "$unit"') < text.index('install -d -o "$CTRL"')
 assert re.search(r'\bsystemctl\s+disable\b',text)
 assert not re.search(r'(?m)^\s*(?:sudo\s+)?systemctl\s+(?:start|enable|restart)\b',text)
 assert not re.search(r'(?im)^\s*(?:sudo\s+)?tailscale\s+funnel\b',text)
