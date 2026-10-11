@@ -132,6 +132,7 @@ def main():
             "LOCAL_SHELL_MCP_OAUTH_ACCESS_TOKEN_TTL_S":"3600",
             "LOCAL_SHELL_MCP_PUBLIC_BASE_URL":url,
             "LOCAL_SHELL_MCP_REMOTE_ENABLED":"true",
+            "PUBLIC_MCP_ALLOW_REMOTE_TEST":"1",
             "LOCAL_SHELL_MCP_REMOTE_POLL_TIMEOUT_S":"1",
             "LOCAL_SHELL_MCP_REMOTE_PEER_TRANSFER_ENABLED":"false",
             "LOCAL_SHELL_MCP_UI_ENABLED":"false",
