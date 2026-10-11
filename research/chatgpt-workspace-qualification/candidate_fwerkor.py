@@ -90,12 +90,9 @@ async def scenario(root: Path):
 
     outside=root/"outside.txt"; outside.write_text("DONOTMODIFY\n")
     escaped_result = await mcp.call_tool("file_read",{"path":"../outside.txt"})
-    assert isinstance(escaped_result, (list,tuple)) and len(escaped_result)>=2,repr(escaped_result)
-    structured = next((v for v in escaped_result if isinstance(v,dict) and "ok" in v),None)
-    rejected = any(v is True for v in escaped_result[2:]) or (
-        structured is not None and structured.get("ok") is False
-    )
-    assert rejected, ("Path escape unexpectedly succeeded",repr(escaped_result)[:700])
+    assert escaped_result.isError is True, repr(escaped_result)[:700]
+    assert escaped_result.structuredContent.get("ok") is False,repr(escaped_result)[:700]
+    assert "Path escapes workspace" in escaped_result.structuredContent.get("message",""),repr(escaped_result)[:700]
     assert "DONOTMODIFY" not in str(escaped_result), "Escaped file content was disclosed"
     assert outside.read_text()=="DONOTMODIFY\n"
     report.append({"gate":"Outside-file read blocked","status":"PASS","detail":"Unchanged external file"})
