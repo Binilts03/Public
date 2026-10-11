@@ -125,6 +125,7 @@ jobs:
           bash -n research/chatgpt-workspace-qualification/deploy/codespaces-isolated-stage.sh
           bash -n research/chatgpt-workspace-qualification/deploy/codespaces-start-controller.sh
           bash -n research/chatgpt-workspace-qualification/deploy/codespaces-qualify-partial.sh
+          python3 -m py_compile research/chatgpt-workspace-qualification/deploy/codespaces-diagnose-controller.py
           python3 - <<'PY'
           from pathlib import Path
           root=Path('research/chatgpt-workspace-qualification/deploy')
