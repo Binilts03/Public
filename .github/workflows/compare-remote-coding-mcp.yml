@@ -120,6 +120,31 @@ jobs:
               assert banned not in s,banned
           print('PASS: Codespaces bootstrap is syntax-valid and staging-only')
           PY
+      - name: Verify Codespaces dual-UID staging and OAuth-only startup contracts
+        run: |
+          bash -n research/chatgpt-workspace-qualification/deploy/codespaces-isolated-stage.sh
+          bash -n research/chatgpt-workspace-qualification/deploy/codespaces-start-controller.sh
+          python3 - <<'PY'
+          from pathlib import Path
+          root=Path('research/chatgpt-workspace-qualification/deploy')
+          stage=(root/'codespaces-isolated-stage.sh').read_text()
+          launch=(root/'codespaces-start-controller.sh').read_text()
+          for required in ('useradd --system --user-group','runuser -u "$WORKER"','no-push://disabled',
+                           'LOCAL_SHELL_MCP_DISABLE_LOCAL=true','LOCAL_SHELL_MCP_AUTH_MODE=oauth',
+                           'LOCAL_SHELL_MCP_AUTH_BYPASS_LOCALHOST=false',
+                           'LOCAL_SHELL_MCP_OAUTH_JWT_SECRET=$JWT_SECRET',
+                           'HOST_NOT_EXPOSED'):
+              assert required in stage,required
+          for required in ('LOCAL_CONTROLLER_GATE_PASS','PORT_VISIBILITY_UNCHANGED',
+                           'LOCAL_SHELL_MCP_AUTH_MODE=oauth','LOCAL_SHELL_MCP_DISABLE_LOCAL=true',
+                           'http_code" == 401','nondumpable_mcp_entrypoint.py',
+                           'CONTROLLER_ONLY'):
+              assert required in launch,required
+          for banned in ('gh codespace ports visibility','systemctl start','systemctl enable','docker run'):
+              assert banned not in stage and banned not in launch,banned
+          assert 'remote_worker' not in launch
+          print('PASS: Codespaces staged two-UID security contract and OAuth controller-only startup')
+          PY
       - name: Execute installer on EPHEMERAL GitHub-hosted Ubuntu
         run: |
           sudo bash research/chatgpt-workspace-qualification/deploy/install-staged.sh
