@@ -109,3 +109,54 @@ def test_validate_cli_offline_and_no_installs(capsys, monkeypatch):
     captured = capsys.readouterr().out
     assert "TUNNEL_NON_SECRET_PROFILE_VALID" in captured
     assert "NO_DOWNLOAD_NO_INSTALL_NO_MODEL_CALL" in captured
+
+
+
+def test_install_is_independent_of_controller_and_worker_processes(tmp_path, monkeypatch):
+    """Catch the real Codespaces regression: pgrep refused installation."""
+    import inspect
+    import pwd
+    assert "pgrep" not in inspect.getsource(m.require_host)
+    assert "require_live_services" not in inspect.getsource(m.cmd_install)
+    assert "require_live_services" not in inspect.getsource(m.cmd_key)
+    assert "require_live_services()" in inspect.getsource(m.cmd_client)
+
+    monkeypatch.setattr(m, "BASE", tmp_path / "pinned")
+    monkeypatch.setattr(m, "PRIVATE", tmp_path / "private")
+    monkeypatch.setattr(m, "INSTALLED_PROFILE", m.BASE / "profile.yaml")
+    monkeypatch.setattr(m, "BINARY", m.BASE / "tunnel-client")
+    monkeypatch.setattr(m, "KEY_FILE", m.PRIVATE / "runtime.key")
+    monkeypatch.setattr(m, "RUN_AS", pwd.getpwuid(__import__("os").getuid()).pw_name)
+    monkeypatch.setattr(m, "require_host", lambda: None)
+    monkeypatch.setattr(m, "ensure_separate_user", lambda: None)
+    monkeypatch.setattr(m, "download_release", lambda: {
+        name: name.encode("utf-8") for name in m.EXPECTED_FILES
+    })
+    monkeypatch.setattr(m.os, "chown", lambda *args: None)
+    monkeypatch.setattr(
+        m, "require_live_services",
+        lambda: pytest.fail("offline installation unexpectedly needs running worker/controller"),
+    )
+    m.cmd_install()
+    assert m.BINARY.is_file()
+    assert m.INSTALLED_PROFILE.read_text(encoding="utf-8") == m.PROFILE_TEXT
+    assert not m.KEY_FILE.exists()
+    with pytest.raises(m.Refusal, match="install paths already exist"):
+        m.cmd_install()
+
+
+def test_live_service_checks_apply_only_to_tunnel_activation(monkeypatch):
+    """Doctor/run must be blocked before reading/using credentials while offline."""
+    monkeypatch.setattr(m, "require_host", lambda: None)
+    monkeypatch.setattr(m, "installed_gate", lambda: None)
+    monkeypatch.setattr(
+        m, "require_live_services",
+        lambda: (_ for _ in ()).throw(m.Refusal("controller is not running")),
+    )
+    monkeypatch.setattr(
+        m, "private_file",
+        lambda *args: pytest.fail("read key despite failed live preflight"),
+    )
+    for verb in ("doctor", "run"):
+        with pytest.raises(m.Refusal, match="controller is not running"):
+            m.cmd_client(verb)
