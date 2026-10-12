@@ -46,8 +46,8 @@ case "$remote" in
   https://github.com/Binilts03/Public|https://github.com/Binilts03/Public.git|git@github.com:Binilts03/Public.git) ;;
   *) abort 'unexpected Git origin; Public only';;
 esac
-[[ "$(runuser -u codespace -- git -C "$ORIGINAL" branch --show-current)" ==
-   experiments/chatgpt-workspace-qualification ]] || abort 'wrong qualification branch'
+[[ "$(runuser -u codespace -- git -C "$ORIGINAL" branch --show-current)" == "experiments/chatgpt-workspace-qualification" ]] ||
+  abort 'wrong qualification branch'
 runuser -u "$WORKER" -- test ! -x "$ORIGINAL" ||
   abort 'existing Public ACL must already deny worker traversal'
 runuser -u "$WORKER" -- test ! -r /srv/chatgpt-controller/controller.env ||
