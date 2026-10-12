@@ -30,7 +30,7 @@ from real_process_oauth_e2e import port_available, server  # noqa: E402
 import gateway as g  # noqa: E402
 
 ISSUER = "https://auth.example.test"
-RESOURCE = "https://api.openai.com/v1/tunnel/tunnel_6acd09e0298481919ac84778501b0aef/mcp"
+RESOURCE = "https://api.openai.com/v1/mcp/tunnel_6acd09e0298481919ac84778501b0aef"
 CALLBACK = "https://chatgpt.com/connector_platform_oauth_redirect"
 
 
