@@ -51,6 +51,10 @@ PINNED_UPSTREAM = "dec01b9f50f966097ddfc84d357d12a52f238935"
 EXPECTED_REPO = "https://github.com/Binilts03/Public.git"
 EXPECTED_PUSH = "no-push://disabled"
 
+# Controlled, non-secret diagnostics. Never expose arbitrary exception text,
+# invitations, bearer tokens, raw worker logs, or registry file contents.
+FAILURE_STAGE = ["preflight"]
+
 class GateFailure(Exception):
     pass
 
@@ -430,7 +434,9 @@ def stop_our_worker(p: subprocess.Popen) -> None:
                 pass
 
 def main() -> None:
+    FAILURE_STAGE[0] = "host_preflight"
     host_gate()
+    FAILURE_STAGE[0] = "oauth_exchange"
     config = read_controller_credentials()
     token = local_oauth(
         config["LOCAL_SHELL_MCP_PUBLIC_BASE_URL"],
@@ -438,15 +444,19 @@ def main() -> None:
         config["LOCAL_SHELL_MCP_OAUTH_JWT_SECRET"],
     )
     print("LOCAL_OAUTH_PKCE_PASS: discovery, JWT issuer/audience, 401 negatives and replay rejection")
+    FAILURE_STAGE[0] = "mcp_control_plane"
     summary, invite = asyncio.run(mcp_test(token))
     print("LOCAL_MCP_CONTROL_PLANE_PASS: tools discovered, local shell denied, one-time invite created")
+    FAILURE_STAGE[0] = "worker_spawn"
     worker = spawn_worker(invite)
+    FAILURE_STAGE[0] = "remote_verification"
     try:
         result = asyncio.run(verify_remote(token, worker))
         require(worker.poll() is None, "worker disappeared after verification")
     except BaseException:
         stop_our_worker(worker)
         raise
+    FAILURE_STAGE[0] = "success"
     print("WORKER_ENROLLMENT_AND_REMOTE_SHELL_PASS:", json.dumps(result, sort_keys=True))
     print("WORKER_PROCESS_PID:", worker.pid)
     print("WORKER_LEFT_RUNNING_FOR_CONNECTION_GATE: yes (not supervised across Codespace shutdown)")
@@ -456,12 +466,13 @@ def main() -> None:
 if __name__ == "__main__":
     try:
         main()
-    except (GateFailure, AssertionError, OSError, KeyError, ValueError,
-            subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-        # Never echo values (some exceptions embed credential-bearing responses).
-        if isinstance(exc, GateFailure):
-            print("BLOCKED:", str(exc), file=sys.stderr)
-        else:
-            print("BLOCKED: private MCP OAuth/worker verification failed; review protected logs locally",
-                  file=sys.stderr)
+    except Exception as exc:  # noqa: BLE001
+        # Fixed stage and Python exception TYPE only; not exception messages,
+        # network responses or any invite/worker credential content.
+        cls = type(exc).__name__
+        error = getattr(exc, "errno", None)
+        errno_part = (" errno=" + str(error)) if isinstance(error, int) else ""
+        print("BLOCKED: stage=" + FAILURE_STAGE[0] +
+              " class=" + cls + errno_part +
+              " (no credentials/logs disclosed)", file=sys.stderr)
         raise SystemExit(2)
