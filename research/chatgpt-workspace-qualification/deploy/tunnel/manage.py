@@ -231,7 +231,9 @@ def cmd_install() -> None:
 
 def installed_gate() -> None:
     require(BASE.is_dir() and not BASE.is_symlink(), "tunnel client not installed")
-    require(BASE.stat().st_uid == 0, "tunnel install directory not root owned")
+    require(BASE.stat().st_uid == 0
+            and stat.S_IMODE(BASE.stat().st_mode) == 0o755,
+            "tunnel install directory is not root-owned and immutable by unprivileged users")
     require(BINARY.is_file() and not BINARY.is_symlink()
             and BINARY.stat().st_uid == 0
             and not (stat.S_IMODE(BINARY.stat().st_mode) & 0o022),
@@ -324,7 +326,7 @@ def main() -> None:
 if __name__ == "__main__":
     try:
         main()
-    except (Refusal, OSError, ValueError, RuntimeError,
+    except (Refusal, OSError, ValueError, RuntimeError, KeyError, EOFError,
             subprocess.SubprocessError, zipfile.BadZipFile) as exc:
         # No arbitrary errors or secret-bearing output. Reason only if ours.
         if isinstance(exc, Refusal):
