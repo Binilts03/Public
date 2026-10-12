@@ -11,10 +11,13 @@ import http.client
 import json
 import os
 import pwd
+import sys
+from pathlib import Path
 import socket
 import ssl
 from urllib.parse import urlsplit
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from gateway import (
     Contract, Refusal, GATEWAY_PORT, MAX_RESPONSE,
     require, exact_origin, request_upstream,
@@ -42,9 +45,15 @@ def _local_get(path: str, *, port: int, timeout: float = 3):
         conn.close()
 
 
+def expected_matches(metadata: dict, *, issuer: str, resource: str) -> bool:
+    return metadata.get("issuer") == issuer and metadata.get("resource") == resource
+
+
 def local_report(*, controller_port=CONTROLLER_PORT,
                  health_port=TUNNEL_HEALTH_PORT,
-                 gateway_port=GATEWAY_PORT) -> list[str]:
+                 gateway_port=GATEWAY_PORT,
+                 expected_issuer: str | None = None,
+                 expected_resource: str | None = None) -> list[str]:
     """Report only states, never payload, PIN, key material or OAuth codes."""
     messages = []
     for label, port in (("controller_health", controller_port),
@@ -79,6 +88,11 @@ def local_report(*, controller_port=CONTROLLER_PORT,
             ("PASS" if "S256" in auth.get("code_challenge_methods_supported", [])
              else "MISSING")
         )
+        if expected_issuer is not None and expected_resource is not None:
+            expected = auth.get("issuer") == expected_issuer and aud == expected_resource
+            messages.append(
+                "CONTROLLER_MIGRATION_CONTRACT_" +
+                ("MATCH" if expected else "MISMATCH_NO_WRITE"))
     except (OSError, ValueError, KeyError, Refusal):
         messages.append("CONTROLLER_METADATA_UNAVAILABLE")
     try:
@@ -164,12 +178,17 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", choices=("local", "external"))
     parser.add_argument("--issuer", help="Exact reviewed HTTPS OAuth-only origin")
+    parser.add_argument("--resource", help="Exact anticipated MCP resource audience (local mode only)")
     args = parser.parse_args()
     if args.mode == "local":
-        require(not args.issuer, "local inspection must not perform external requests")
-        messages = local_report()
+        require(bool(args.issuer) == bool(args.resource),
+                "pass both --issuer and --resource for migration comparison")
+        if args.issuer:
+            exact_origin(args.issuer)
+        messages = local_report(expected_issuer=args.issuer, expected_resource=args.resource)
     else:
-        require(args.issuer is not None, "external preflight requires HTTPS issuer")
+        require(args.issuer is not None and not args.resource,
+                "external preflight requires only the public HTTPS issuer")
         messages = external_report(args.issuer)
     for item in messages:
         print(item)
