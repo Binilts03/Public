@@ -72,3 +72,62 @@ def test_resume_restricts_registration_and_keeps_permissions():
     assert "local_shell_mcp.remote_worker" in m.STRICT_WORKER_SOURCE
     assert "stop_only_child(child)" in source
     assert '"LOCAL_SHELL_MCP_ALLOW_FULL_CONTAINER": "false"' in source
+
+
+
+@pytest.mark.parametrize("valid_resume", [True, False])
+def test_resume_stub_fails_closed_and_never_writes_saved_identity(monkeypatch, valid_resume):
+    import sys
+    import types
+
+    upstream = types.ModuleType("local_shell_mcp")
+    remote = types.ModuleType("local_shell_mcp.remote")
+    record = {"name": "public-worker",
+              "server": "http://127.0.0.1:8765",
+              "workdir": "/srv/chatgpt-worker/worktrees/Public",
+              "access": "lsmcp_wk_disposable_fixture"}
+    invoked = []
+
+    remote._read_worker_identity = lambda *_: dict(record)
+
+    def request(url, *_args, **_kwargs):
+        invoked.append("resume")
+        return {"ok": valid_resume}
+
+    async def unused(*_args, **_kwargs):
+        pytest.fail("unexpected upstream fallback")
+
+    remote._worker_post_json = request
+    remote._worker_post_json_forever = unused
+    remote._write_worker_identity = lambda *_: pytest.fail("unexpected identity rewrite")
+    remote._delete_worker_identity = lambda: pytest.fail("unexpected identity deletion")
+
+    async def emulate_backend_run(server, invite, name, workdir):
+        assert invite == ""
+        response = await remote._worker_resume_or_none(
+            server + "/api/remote/resume", {}, {}, 30
+        )
+        assert response["ok"] is True
+        remote._write_worker_identity(dict(record))
+        with pytest.raises(RuntimeError):
+            remote._write_worker_identity({**record, "access": "other"})
+        with pytest.raises(RuntimeError):
+            remote._delete_worker_identity()
+        with pytest.raises(RuntimeError):
+            await remote._worker_post_json_forever(
+                server + "/api/remote/register", {}
+            )
+
+    remote.run_worker = emulate_backend_run
+    upstream.remote = remote
+    monkeypatch.setitem(sys.modules, "local_shell_mcp", upstream)
+    monkeypatch.setitem(sys.modules, "local_shell_mcp.remote", remote)
+
+    if valid_resume:
+        exec(compile(m.STRICT_WORKER_SOURCE, "<test-worker>", "exec"),
+             {"__name__": "__main__"})
+    else:
+        with pytest.raises(RuntimeError):
+            exec(compile(m.STRICT_WORKER_SOURCE, "<test-worker>", "exec"),
+                 {"__name__": "__main__"})
+    assert invoked == ["resume"]
