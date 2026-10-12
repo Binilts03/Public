@@ -90,7 +90,7 @@ def active_servers():
     t1.start()
     try:
         g.check_controller_contract(CONTRACT, port=upstream.server_port)
-        gateway = ThreadingHTTPServer(
+        gateway = g.BoundedLoopbackServer(
             ("127.0.0.1", 0), g.make_handler(CONTRACT, upstream_port=upstream.server_port)
         )
         t2 = threading.Thread(target=gateway.serve_forever, daemon=True)
