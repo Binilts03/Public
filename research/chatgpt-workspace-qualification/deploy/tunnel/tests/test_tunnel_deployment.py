@@ -89,6 +89,9 @@ def test_staging_is_manual_no_model_api_no_external_port_mutation():
         "runuser", "chatgpt-tunnel", "no-create-home",
         "setfacl", "127.0.0.1", "NO_PROXY", "CONTROL_PLANE_API_KEY",
         "MAX_ARCHIVE", "os.O_NOFOLLOW", "getpass.getpass",
+        "only the Public qualification branch is authorized",
+        "original Codespace checkout must be Binilts03/Public",
+        "controller authorization boundary changed",
     ):
         assert assertion in source
     for dangerous in (
@@ -100,8 +103,8 @@ def test_staging_is_manual_no_model_api_no_external_port_mutation():
         assert dangerous not in source, dangerous
 
 
-def test_validate_cli_offline_and_no_installs(capsys):
-    m.main.__globals__["sys"].argv = ["manage.py", "validate"]
+def test_validate_cli_offline_and_no_installs(capsys, monkeypatch):
+    monkeypatch.setattr(m.sys, "argv", ["manage.py", "validate"])
     m.main()
     captured = capsys.readouterr().out
     assert "TUNNEL_NON_SECRET_PROFILE_VALID" in captured
