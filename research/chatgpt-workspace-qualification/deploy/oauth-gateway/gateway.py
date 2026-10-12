@@ -194,13 +194,16 @@ def make_handler(contract: Contract, *, upstream_port: int = UPSTREAM_PORT):
         sys_version = ""
 
         def parse_request(self):
-            # BaseHTTPRequestHandler normalizes leading '//' to '/', so check
-            # the original request-target before that parser can erase it.
+            # BaseHTTPRequestHandler normalizes leading '//' to '/', so
+            # inspect the original request-target before dispatch. Parse
+            # first to initialize the HTTP version for a valid 400 response.
+            if not super().parse_request():
+                return False
             raw = self.raw_requestline.split(b" ", 2)
             if len(raw) >= 2 and raw[1].startswith(b"//"):
                 self.send_error(400, "Invalid request target")
                 return False
-            return super().parse_request()
+            return True
 
         def log_message(self, fmt, *args):
             # Never log query strings, authorization codes, PINs, bearer tokens.
