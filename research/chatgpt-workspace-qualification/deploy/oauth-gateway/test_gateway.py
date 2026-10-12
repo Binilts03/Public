@@ -24,7 +24,7 @@ sys.modules[spec.name] = g
 spec.loader.exec_module(g)
 
 ISSUER = "https://auth.example.test"
-RESOURCE = "https://api.openai.com/v1/tunnel/tunnel_6acd09e0298481919ac84778501b0aef/mcp"
+RESOURCE = "https://api.openai.com/v1/mcp/tunnel_6acd09e0298481919ac84778501b0aef"
 CALLBACK = "https://chatgpt.com/connector_platform_oauth_redirect"
 CONTRACT = g.Contract(ISSUER, RESOURCE, (CALLBACK,))
 
@@ -194,6 +194,9 @@ def test_host_redirect_registration_and_resource_injection_refused(active_server
         ("GET", "/oauth/authorize?" + urlencode({
             **auth_params(), "resource": "https://attacker.example"}), None, None, None),
         ("GET", "/oauth/authorize?" + urlencode({
+            k: v for k, v in auth_params().items() if k != "resource"
+        }), None, None, None),
+        ("GET", "/oauth/authorize?" + urlencode({
             **auth_params(), "code_challenge_method": "plain"}), None, None, None),
         ("GET", "/oauth/authorize?" + urlencode(auth_params()) +
          "&redirect_uri=https%3A%2F%2Fattacker.example", None, None, None),
@@ -245,6 +248,8 @@ def test_bad_config_is_rejected_before_any_listener():
         g.Contract("https://private-8765.app.github.dev", RESOURCE, (CALLBACK,))
     with pytest.raises(g.Refusal):
         g.Contract(ISSUER, "https://example.com/mcp", (CALLBACK,))
+    with pytest.raises(g.Refusal):
+        g.Contract(ISSUER, "https://api.openai.com/v1/tunnel/tunnel_" + "a" * 32 + "/mcp", (CALLBACK,))
     with pytest.raises(g.Refusal):
         g.Contract(ISSUER, RESOURCE, ("https://attacker.example/cb",))
     with pytest.raises(g.Refusal):
