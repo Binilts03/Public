@@ -264,6 +264,50 @@ separately threat-modelled before use. Codespace shutdown terminates its
 running worker because this stage deliberately does not install a persistent
 supervisor. A successful localhost test is NOT production readiness.
 
+## Recover an already-enrolled worker after Codespaces shutdown (no new invitation)
+
+Observed in the live Codespace: controller and worker processes had stopped,
+but saved worker identity/configuration were mode 0600, controller registry
+was valid with **exactly one previously enrolled worker**, there were no
+pending invitations, and the worker still could not access the original
+Codespace checkout or controller credentials.
+
+The existing controller was restarted without changing port visibility:
+
+```bash
+cd /workspaces/Public
+sudo bash research/chatgpt-workspace-qualification/deploy/codespaces-start-controller.sh "$CODESPACE_NAME"
+```
+
+Confirmed live: `LOCAL_CONTROLLER_GATE_PASS`. A previous output string
+"worker not enrolled" was inaccurate; this startup starts the controller
+ONLY and does not inspect, delete, reenroll or start the worker. This string
+has been corrected in the source.
+
+To restart the one existing worker, the pinned upstream's unguarded
+`worker run` subcommand MUST NOT be used directly: its resume-failure path
+can delete the saved worker identity and attempt fallback registration.
+Use the guarded restart script instead. It compares the saved worker access
+credential with the existing controller registry privately; refuses any
+second worker; checks the Public-only worktree, disabled Git push remote,
+original-workspace ACL and Docker-socket denial; uses a short fixed child
+bootstrap that refuses identity deletion/rewriting or registration fallback;
+and reruns actual remote-stdout verification before leaving the child alive.
+
+```bash
+cd /workspaces/Public
+git pull --ff-only origin experiments/chatgpt-workspace-qualification
+sudo /opt/public-chatgpt-mcp/venv/bin/python \
+  research/chatgpt-workspace-qualification/deploy/codespaces-resume-enrolled-worker.py
+```
+
+Expected final markers: `EXISTING_WORKER_STRICT_RESUME_PASS`,
+`WORKER_LEFT_RUNNING_NO_INVITE_NO_REENROLLMENT`. No new invitation or
+worker identity is created. It starts no tunnel and does not publish ports.
+This resume procedure is not claimed to have passed on the live Codespace
+until the operator reports these exact markers. If blocked, preserve the
+registry, identity and worker log; do not run enrollment as a fallback.
+
 ## Zero-model-inference tunnel-client delivery (separate optional transport)
 
 A pinned, non-secret `openai/tunnel-client` setup is now tracked in
