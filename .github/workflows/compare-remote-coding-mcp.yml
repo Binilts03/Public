@@ -132,6 +132,8 @@ jobs:
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/codespaces-diagnose-controller.py
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/codespaces-repair-runtime.py
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/codespaces-enroll-verify-worker.py
+          python3 -m py_compile research/chatgpt-workspace-qualification/deploy/codespaces-probe-worker-launch.py
+          python3 -m py_compile research/chatgpt-workspace-qualification/deploy/tests/test_codespaces_runuser_path.py
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/codespaces-diagnose-workspaces.py
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/codespaces-diagnose-worker-enrollment.py
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/tests/test_codespaces_worker_registry.py
@@ -280,6 +282,9 @@ jobs:
           rm -rf -- "$testroot"
           echo "PASS: parent ACL denies worker access to all sibling paths without touching sibling permissions"
 
+      - name: Enforce root-owned runuser under restricted PATH, with real UID drop
+        run: |
+          sudo python3 research/chatgpt-workspace-qualification/deploy/tests/test_codespaces_runuser_path.py
       - name: Exercise restricted-umask runtime repair and unsafe symlink refusal
         run: |
           sudo python3 research/chatgpt-workspace-qualification/deploy/tests/test_codespaces_runtime_permissions.py
