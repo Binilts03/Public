@@ -130,6 +130,7 @@ jobs:
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/codespaces-repair-runtime.py
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/codespaces-enroll-verify-worker.py
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/codespaces-diagnose-workspaces.py
+          python3 -m py_compile research/chatgpt-workspace-qualification/deploy/codespaces-diagnose-worker-enrollment.py
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/tests/test_codespaces_runtime_permissions.py
           python3 - <<'PY'
           from pathlib import Path
@@ -189,6 +190,18 @@ jobs:
           assert 'remote_manage' in attest and 'run_shell' in attest
           assert 'gh codespace ports visibility' not in attest
           assert 'git push' not in attest
+          assert 'cwd=str(WORKTREE)' in attest
+          assert 'worker_docker_socket_denial_preflight' in attest
+          assert 'test ! -r /var/run/docker.sock' not in attest
+          diag=(root/'codespaces-diagnose-worker-enrollment.py').read_text()
+          for required in ('CODESPACES_WORKER_ENROLLMENT_DIAG_V1_READ_ONLY',
+                           'NO_SECRETS_PRINTED_NO_GIT_ACTIONS_NO_NEW_INVITES_NO_SERVICE_CHANGES',
+                           'worker_log_categories=', 'worker_identity', 'worker_config',
+                           'controller_registry', 'controller_health_http='):
+              assert required in diag,required
+          for banned in ('print(data)', 'print(stream.read', 'print(invite)',
+                         'print(token)', 'subprocess.Popen(', 'os.chmod(', 'os.chown('):
+              assert banned not in diag,banned
           assert '"worker can write /workspaces root;' in attest
           workspaces_diag=(root/'codespaces-diagnose-workspaces.py').read_text()
           assert 'BLOCKER_ROOT:' in workspaces_diag
