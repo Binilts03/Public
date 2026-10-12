@@ -132,6 +132,7 @@ jobs:
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/codespaces-diagnose-controller.py
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/codespaces-repair-runtime.py
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/codespaces-enroll-verify-worker.py
+          python3 -m py_compile research/chatgpt-workspace-qualification/deploy/codespaces-reverify-enrolled-worker.py
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/codespaces-probe-worker-launch.py
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/tests/test_codespaces_runuser_path.py
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/codespaces-diagnose-workspaces.py
