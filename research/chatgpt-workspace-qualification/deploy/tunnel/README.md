@@ -103,6 +103,56 @@ sudo /usr/bin/python3 research/chatgpt-workspace-qualification/deploy/tunnel/man
 
 The prompt hides input and writes the key privately. A pre-existing key causes a refusal; this command does not rotate credentials. Create a restricted *runtime* key in OpenAI Platform, not an admin key. The key is necessary for tunnel control-plane authentication, **not for model inference**. We have not independently established the billing terms for tunnel transport: do not assume either that the traffic is free or that it requires model-usage spending. Check your Platform billing/permissions before activation.
 
+### Failure: `401 invalid_api_key` after starting `run`
+
+The 2026-10-12 live Codespace log records repeated `401 Unauthorized`
+responses from the OpenAI tunnel control plane with error code
+`invalid_api_key` (the logged key was masked). A successful `doctor`
+is **not evidence** that the key was remotely accepted: it checks the
+environment reference and local MCP reachability. The local line
+`tunnel-client started` also is not proof of a connected tunnel.
+Stop the foreground `run` with Ctrl+C; do **not** continue to ChatGPT
+plugin registration or keep retrying the rejected key.
+
+Create a **new complete Platform API secret**, in the organization that
+owns the tunnel. Confirm that the operator has organization-level
+Tunnels Read + Use permissions. The current log specifically identifies
+an invalid key; role permission failures are a distinct possible
+subsequent problem, not established by these 401 responses. Do not paste
+key material into chat, shell arguments, CI logs or Git. The creation
+UI may show a new key's complete value only once.
+
+After stopping the tunnel, explicitly replace the existing key
+(the `key` subcommand deliberately never overwrites existing state):
+
+```bash
+sudo /usr/bin/python3 research/chatgpt-workspace-qualification/deploy/tunnel/manage.py replace-key
+```
+
+This requires a TTY and asks for the **new key twice**, checking they
+match, are plausibly complete and differ from the old secret. It refuses
+a running `tunnel-client` process or bound health port, performs
+an atomic private-file replacement, and does not echo either key. A
+failure prior to replacement retains the old file. It does not
+invoke a model, worker, controller, Git or a tunnel network operation.
+Expected: `TUNNEL_RUNTIME_KEY_REPLACED_ATOMICALLY_NO_KEY_ECHO`.
+
+**Separate unresolved errors in that live log:**
+
+- `oauth discovery: destination origin is not trusted` for the
+  **GitHub-private Codespaces issuer**. Blindly adding the origin
+  to the tunnel client trust list will not make it reachable to
+  ChatGPT's browser-facing OAuth flow. Requires separately reviewed
+  OAuth hosting and origin plan, not disabling OAuth.
+- `failed to connect to mcp ... Unauthorized` indicates the local
+  MCP server requires authentication during the client probe.
+  Establish an approved OAuth/token handoff or compatible connector
+  authentication before treating a 401 response as a viable tool path.
+- Harpoon's `oauth-prmd-source-0 ... base URL must use https`
+  was auto-registration of an optional callout, not evidence that the
+  local MCP target itself must move to HTTP-over-public-internet.
+  Do **not** set a global plaintext HTTP allowance as a knee-jerk fix.
+
 **4. Run diagnostics** (does not reenroll worker or start the tunnel daemon):
 
 ```bash
