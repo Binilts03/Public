@@ -256,6 +256,16 @@ def cmd_install() -> None:
     print("NO_KEY_NO_WORKER_ENROLLMENT_NO_PORT_CHANGES_NO_GIT_WRITES")
 
 
+def acceptable_root_install_mode(mode: int) -> bool:
+    """Safe exact modes for a root-owned release directory.
+
+    Codespaces can inherit the setgid bit from /opt (root:oryx, 2755);
+    with group/other write denied, this is as non-writable as 0755.
+    Never allow setuid/sticky or group/other-write variants.
+    """
+    return mode in (0o755, 0o2755)
+
+
 def verify_pristine_install(*, root_uid: int = 0, tunnel_uid: int | None = None) -> int:
     """Verify precisely the prior staged installation before a mode repair.
 
@@ -267,7 +277,8 @@ def verify_pristine_install(*, root_uid: int = 0, tunnel_uid: int | None = None)
         tunnel_uid = pwd.getpwnam(RUN_AS).pw_uid
     base_st = BASE.lstat()
     require(stat.S_ISDIR(base_st.st_mode) and base_st.st_uid == root_uid
-            and stat.S_IMODE(base_st.st_mode) in (0o700, 0o755),
+            and (stat.S_IMODE(base_st.st_mode) == 0o700
+                 or acceptable_root_install_mode(stat.S_IMODE(base_st.st_mode))),
             "tunnel install directory is not an expected root-owned staging directory")
     fd = os.open(BASE, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
@@ -308,6 +319,8 @@ def cmd_inspect_install() -> None:
     print("NO_REPAIR_NO_KEY_READ_NO_NETWORK_NO_SERVICE_CHANGES")
     if mode == 0o700:
         print("TUNNEL_MODE_REPAIR_ELIGIBLE_AFTER_OPERATOR_REVIEW")
+    else:
+        print("TUNNEL_INSTALL_PERMISSIONS_ACCEPTED_NO_REPAIR")
 
 
 def repair_verified_directory(*, owner_uid: int = 0) -> None:
@@ -334,7 +347,7 @@ def cmd_repair_install_mode() -> None:
 def installed_gate() -> None:
     require(BASE.is_dir() and not BASE.is_symlink(), "tunnel client not installed")
     require(BASE.stat().st_uid == 0
-            and stat.S_IMODE(BASE.stat().st_mode) == 0o755,
+            and acceptable_root_install_mode(stat.S_IMODE(BASE.stat().st_mode)),
             "tunnel install directory is not root-owned and immutable by unprivileged users")
     require(BINARY.is_file() and not BINARY.is_symlink()
             and BINARY.stat().st_uid == 0
