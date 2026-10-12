@@ -41,6 +41,9 @@ jobs:
       - name: Regression - OAuth-only public edge dry-run and read-only preflight
         run: |
           python -m pytest -q research/chatgpt-workspace-qualification/deploy/oauth-gateway/test_ingress_preflight.py
+      - name: Regression - isolated UID and parent ACL gateway staging contract
+        run: |
+          python -m pytest -q research/chatgpt-workspace-qualification/deploy/oauth-gateway/test_stage_contract.py
       - name: Regression - strict resume of existing registered worker only
         run: |
           python -m pytest -q research/chatgpt-workspace-qualification/deploy/tests/test_codespaces_strict_worker_resume.py
@@ -161,6 +164,8 @@ jobs:
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/oauth-gateway/cloudflare_ingress.py
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/oauth-gateway/verify_cloudflared.py
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/oauth-gateway/test_ingress_preflight.py
+          python3 -m py_compile research/chatgpt-workspace-qualification/deploy/oauth-gateway/test_stage_contract.py
+          bash -n research/chatgpt-workspace-qualification/deploy/oauth-gateway/codespaces-stage-gateway.sh
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/tunnel/manage.py
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/tunnel/tests/test_tunnel_deployment.py
           python3 research/chatgpt-workspace-qualification/deploy/tunnel/manage.py validate
