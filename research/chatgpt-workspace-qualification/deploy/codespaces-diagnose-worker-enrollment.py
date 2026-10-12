@@ -7,6 +7,7 @@ Reads only expected service log and state metadata; fixed diagnostic categories.
 """
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import pwd
@@ -14,6 +15,7 @@ import re
 import stat
 import subprocess
 import sys
+import time
 from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 
@@ -25,6 +27,7 @@ IDENTITY = WORKER_ROOT / "state/identity.json"
 CONFIG = WORKER_ROOT / "state/config.json"
 LOG = WORKER_ROOT / "logs/worker.log"
 REGISTRY = CTRL_ROOT / "state/remote-workers.json"
+active_process_cache = [False]
 
 
 def report_path(label: str, path: Path) -> None:
@@ -114,6 +117,47 @@ def classify_log() -> None:
     print("worker_log_traceback=" + ("YES" if "Traceback (most recent call last)" in data else "NO"))
 
 
+def registry_counts() -> None:
+    """Report counts only; NEVER print invite codes or worker access tokens."""
+    if not REGISTRY.is_file() or REGISTRY.is_symlink():
+        print("controller_registry_valid=NO")
+        print("safe_to_attempt_new_enrollment=NO")
+        return
+    try:
+        item = REGISTRY.stat()
+        expected_owner = pwd.getpwnam(CTRL).pw_uid
+        if item.st_uid != expected_owner or stat.S_IMODE(item.st_mode) != 0o600:
+            raise ValueError("bad registry owner or mode")
+        payload = json.loads(REGISTRY.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict) or payload.get("version") != 1:
+            raise ValueError("invalid registry version")
+        workers, invites = payload.get("workers"), payload.get("invites")
+        if not isinstance(workers, list) or not isinstance(invites, list):
+            raise ValueError("invalid registry shape")
+        if any(not isinstance(x, dict) for x in workers + invites):
+            raise ValueError("invalid registry record")
+        now = time.time()
+        # The upstream registry stores invites as {code, expires_at, ...}.
+        # Do not inspect or display code/token values.
+        active = sum(
+            float(row.get("expires_at", 0)) > now and not row.get("used", False)
+            for row in invites
+        )
+        print("controller_registry_valid=YES")
+        print("controller_registered_workers_count=" + str(len(workers)))
+        print("controller_unexpired_invites_count=" + str(active))
+        print("controller_expired_invites_count=" + str(len(invites)-active))
+        clean = (
+            not workers and not active
+            and not IDENTITY.exists() and not CONFIG.exists()
+            and not active_process_cache[0]
+        )
+        print("safe_to_attempt_new_enrollment=" + ("YES" if clean else "NO"))
+    except (OSError, ValueError, TypeError, OverflowError):
+        print("controller_registry_valid=NO")
+        print("safe_to_attempt_new_enrollment=NO")
+
+
 def main() -> int:
     if os.geteuid() != 0 or os.environ.get("SUDO_USER") != "codespace":
         print("BLOCKED: run via sudo python3 from Codespaces login")
@@ -124,7 +168,8 @@ def main() -> int:
     print("CODESPACES_WORKER_ENROLLMENT_DIAG_V1_READ_ONLY")
     print("controller_health_http=" + health())
     print("controller_process=" + ("YES" if active(CTRL, "nondumpable_mcp_entrypoint.py") else "NO"))
-    print("worker_process=" + ("YES" if active(WORKER, "local_shell_mcp.remote_worker") else "NO"))
+    active_process_cache[0] = active(WORKER, "local_shell_mcp.remote_worker")
+    print("worker_process=" + ("YES" if active_process_cache[0] else "NO"))
     for label, item in (
         ("worker_identity", IDENTITY),
         ("worker_config", CONFIG),
@@ -133,6 +178,7 @@ def main() -> int:
     ):
         report_path(label, item)
     classify_log()
+    registry_counts()
     print("worker_can_traverse_original_workspace=" +
           ("YES" if access(WORKER, "-x", "/workspaces/Public") else "NO"))
     print("worker_can_write_workspace_parent=" +
