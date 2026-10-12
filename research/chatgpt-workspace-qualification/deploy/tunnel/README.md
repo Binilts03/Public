@@ -44,6 +44,40 @@ A previous live install attempt printed `BLOCKED: controller is not running`. It
 
 Expected: `TUNNEL_PINNED_RELEASE_INSTALLED_NO_DAEMON`.
 
+**For existing installations created with a restrictive `umask`:** The
+original installer requested directory mode `0755` but did not account
+for umask, so it could produce root-owned `0700` and later block the
+`key` command. This is a *possible cause* of the observed refusal; do
+not assume ownership or permissions without inspecting the live host.
+
+Run the **read-only preflight**, with no secrets or service changes:
+
+```bash
+sudo /usr/bin/python3 research/chatgpt-workspace-qualification/deploy/tunnel/manage.py inspect-install
+```
+
+If it reports `TUNNEL_ROOT_DIRECTORY_MODE=0700` AND
+`TUNNEL_MODE_REPAIR_ELIGIBLE_AFTER_OPERATOR_REVIEW`, use the **explicit,
+one-time, guarded** directory correction:
+
+```bash
+sudo /usr/bin/python3 research/chatgpt-workspace-qualification/deploy/tunnel/manage.py repair-install-mode
+```
+
+This changes **only** the release directory from root-owned `0700` to
+`0755` after checking the exact installed files, their modes/ownership,
+the non-secret profile, the private runtime directory and absence of
+credentials. It does **not** redownload software, change worker or
+controller state, adjust other repository permissions, provision a key,
+start network connections or make ports public. The command refuses
+already-modified trees and is intentionally not a general-purpose chmod.
+Expected result: `TUNNEL_INSTALL_MODE_REPAIRED_ROOT_0755`.
+
+If inspection reports a different mode or `BLOCKED`, **do not use
+chmod manually or reinstall**. Preserve the result and diagnose before
+any state change. New installations explicitly finalize the mode
+independent of inherited umask, with regression coverage.
+
 **3. Provision a restricted runtime API key** (requires Tunnels Read + Use permissions; no key is stored in Git):
 
 ```bash
