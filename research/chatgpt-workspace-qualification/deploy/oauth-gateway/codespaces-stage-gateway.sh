@@ -45,8 +45,7 @@ case "$origin" in
   https://github.com/Binilts03/Public|https://github.com/Binilts03/Public.git|git@github.com:Binilts03/Public.git) ;;
   *) abort 'only Public repository authorized';;
 esac
-[[ "$(runuser -u "$OWNER" -- git -C "$ORIGINAL" branch --show-current)" ==
-   experiments/chatgpt-workspace-qualification ]] ||
+[[ "$(runuser -u "$OWNER" -- git -C "$ORIGINAL" branch --show-current)" == experiments/chatgpt-workspace-qualification ]] ||
   abort 'wrong qualification branch'
 [[ -z "$(runuser -u "$OWNER" -- git -C "$ORIGINAL" status --porcelain)" ]] ||
   abort 'uncommitted modifications; refuse stage'
@@ -100,8 +99,7 @@ done
 
 install -d -o root -g root -m 0755 "$STAGE"
 install -o root -g root -m 0644 "$SOURCE" "$STAGE/gateway.py"
-[[ "$(sha256sum "$SOURCE" | cut -d ' ' -f 1)" ==
-   "$(sha256sum "$STAGE/gateway.py" | cut -d ' ' -f 1)" ]] ||
+[[ "$(sha256sum "$SOURCE" | cut -d ' ' -f 1)" == "$(sha256sum "$STAGE/gateway.py" | cut -d ' ' -f 1)" ]] ||
   abort 'gateway source digest mismatch after installation'
 runuser -u "$GATE" -- env -i PATH=/usr/bin:/bin HOME=/nonexistent \
   PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 "$STAGE/gateway.py" --help >/dev/null ||
