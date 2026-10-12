@@ -179,6 +179,44 @@ The enrollment preflight now also rejects a writable `/workspaces` parent:
 protecting each existing checkout does not prevent a worker from creating
 new entries within a writable parent.
 
+## Interrupted live worker enrollment: preserve state before recovery
+
+Observed in the real Codespace after `PARENT_WORKSPACE_ISOLATION_PASS`
+and `LOCAL_CONTROLLER_GATE_PASS`:
+`LOCAL_OAUTH_PKCE_PASS` and `LOCAL_MCP_CONTROL_PLANE_PASS`, then
+`BLOCKED: private MCP OAuth/worker verification failed`.
+
+This means a one-time invitation was created and the worker launch was
+attempted; it does **not** prove whether registration completed. The
+qualification script intentionally terminates the process it spawned on
+failure, but the worker may have persisted an identity and the controller
+may have persisted a registration. **Do not rerun enrollment** until this
+state has been inspected. Do not print raw logs or worker state (they may
+contain bearer tokens).
+
+```bash
+cd /workspaces/Public
+git pull --ff-only origin experiments/chatgpt-workspace-qualification
+python3 -m py_compile research/chatgpt-workspace-qualification/deploy/codespaces-diagnose-worker-enrollment.py
+sudo /opt/public-chatgpt-mcp/venv/bin/python \
+  research/chatgpt-workspace-qualification/deploy/codespaces-diagnose-worker-enrollment.py
+```
+
+The read-only diagnostic reports only whether `identity.json`,
+`config.json`, controller registration state and the worker's private log
+exist, their ownership/mode, whether a worker remains running, and fixed
+log-error categories. It does not read or print secrets. Share this sanitized
+output to determine the recovery plan. A stale existing invitation is not
+reused blindly.
+
+Two pre-existing test-script issues were corrected for *future* use:
+`subprocess.Popen` now explicitly starts inside the authorized
+`/srv/chatgpt-worker/worktrees/Public` directory instead of inheriting
+the protected `/workspaces/Public` cwd, and the remote shell command no
+longer references the Docker socket, which is blocked by the upstream
+`command_denylist`. The socket's inaccessibility remains verified in the
+privileged preflight under the worker UID.
+
 ## Public ingress is an additional user-controlled security gate
 
 Do **not** make Codespaces port 8765 public until the two results above and a host-identity review pass. GitHub's private forwarded-port authentication is not automatically compatible with ChatGPT's MCP OAuth client. A public forwarded port has no GitHub authentication; rely on the MCP OAuth boundary only after external discovery/authentication/negative tests succeed.
