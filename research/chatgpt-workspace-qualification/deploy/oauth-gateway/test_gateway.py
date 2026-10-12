@@ -179,7 +179,9 @@ def test_every_non_oauth_route_and_wrong_method_denied_without_upstream(active_s
     port, seen = active_servers
     before = len(seen)
     status, _, _ = call(port, method, path)
-    assert status in (404, 405)
+    # BaseHTTPRequestHandler normalizes leading '//' before routing;
+    # reject remains mandatory, but it may be HTTP 400 rather than 404.
+    assert status in (400, 404, 405)
     assert len(seen) == before
 
 
