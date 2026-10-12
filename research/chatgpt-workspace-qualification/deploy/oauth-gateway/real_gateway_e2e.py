@@ -84,7 +84,7 @@ def main() -> None:
         with server(env, private_url, log):
             contract = g.Contract(ISSUER, RESOURCE, (CALLBACK,))
             g.check_controller_contract(contract, port=upstream_port)
-            gateway = ThreadingHTTPServer(
+            gateway = g.BoundedLoopbackServer(
                 ("127.0.0.1", 0),
                 g.make_handler(contract, upstream_port=upstream_port),
             )
