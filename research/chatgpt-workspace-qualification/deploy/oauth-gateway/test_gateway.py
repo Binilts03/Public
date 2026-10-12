@@ -258,8 +258,10 @@ def test_no_public_listener_no_other_repos_no_secret_access_in_source():
     assert 'GATEWAY_HOST = "127.0.0.1"' in source
     assert 'UPSTREAM_HOST = "127.0.0.1"' in source
     assert "http.client.HTTPConnection(UPSTREAM_HOST, port, timeout=5)" in source
+    assert 'os.access("/srv/chatgpt-controller/controller.env", os.R_OK)' in source
+    assert "require_dedicated_gateway_identity()" in source
     for prohibited in [
-        "0.0.0.0", "/workspaces/", "controller.env", "identity.json",
+        "0.0.0.0", "/workspaces/", "identity.json",
         "worker.log", "git push", "setfacl", "subprocess.run",
         "allow-plaintext-http", "AUTH_MODE=none",
     ]:
