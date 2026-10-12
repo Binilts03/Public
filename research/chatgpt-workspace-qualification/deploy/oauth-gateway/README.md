@@ -191,10 +191,22 @@ credentials or DNS records have been supplied or touched.
    It refuses login redirects, non-404 exposure or issuer drift. It does
    **not** guarantee PIN secrecy or a successful OAuth callback.
 
-5. **Other separate gates:** install and verify the dedicated
-   `chatgpt-oauth-gateway` Linux UID/ACL and `chatgpt-oauth-edge`
-   connector identity; validate hostname/DNS/certificate ownership and
-   Cloudflare routes (without Cloudflare Access interstitial redirects);
+5. **Other separate gates:** the repo contains a reviewed
+   `codespaces-stage-gateway.sh` candidate for a one-time, explicitly
+   authorized `sudo bash ... --stage-only` run. It creates only the
+   `chatgpt-oauth-gateway` unprivileged UID, a named-user deny ACL on the
+   `/workspaces` *parent* with a root-private pre-change snapshot, and a
+   root-owned copy of the reviewed gateway code. It does **not** start the
+   gateway, migrate issuer/audience, create a Cloudflare connector identity,
+   or open a port. It refuses an existing/partial installation and requires
+   the original Public checkout to be clean. **Not run on the live host.**
+   After independent host preflight and staging authorization, validate the
+   resulting UID, parent ACL, code digest, other-repo denial and preservation
+   of existing worker processes before any external edge activation.
+
+   Separately establish `chatgpt-oauth-edge` identity, its protected
+   Cloudflare credentials, hostname/DNS/certificate ownership and Cloudflare
+   routes (without Access interstitial redirects);
    limit WAF/rate-limit logging so PINs, auth codes and full URLs do not land
    in logs; add **only** the exact reviewed OAuth hostname to the pinned
    OpenAI tunnel client's OAuth trusted origins; preserve worker isolation;
@@ -209,6 +221,15 @@ Cloudflare's external identity and stable hostname remain prerequisites.
 
 ## CI independent verification
 
+- `test_ingress_preflight.py`: simulated read-only Codespace/HTTPS
+  inspection and Cloudflare route allowlist/404 tests.
+- `verify_cloudflared.py`: ephemeral GitHub CI downloads the exact
+  checksum-pinned `openai/tunnel-client v0.0.15` release and runs its bundled
+  **real Cloudflare ingress parser** against the generated OAuth allowlist,
+  default-deny paths and wrong hostname. No DNS or tunnel process is started.
+- `test_stage_contract.py`: immutable Public-only gateway UID/ACL stage
+  static security contract; separate Codespaces parent ACL tests run against
+  disposable GitHub-hosted Ubuntu users and directories.
 - `test_gateway.py`: real disposable HTTP server; denies unknown paths,
   unapproved OAuth callbacks, DCR redirection, wrong resource, wrong methods,
   malformed requests, unsafe upstream redirects and issuer mismatch.
