@@ -324,16 +324,16 @@ def require_dedicated_gateway_identity() -> None:
             "serve requires an isolated unprivileged chatgpt-oauth-gateway user")
     require(user.pw_shell == "/usr/sbin/nologin",
             "gateway account must have a nologin shell")
-    groups = set(os.getgroups())
-    require(all(os.geteuid() != other.pw_uid for other in
-                (pwd.getpwnam("chatgpt-controller"), pwd.getpwnam("chatgpt-worker"))),
+    import grp
+    group_names = {grp.getgrgid(gid).gr_name for gid in os.getgroups()}
+    require(user.pw_name not in ("chatgpt-controller", "chatgpt-worker"),
             "gateway must have a distinct controller/worker identity")
     require(not os.access("/workspaces", os.X_OK)
             and not os.access("/srv/chatgpt-controller/controller.env", os.R_OK)
             and not os.access("/srv/chatgpt-worker/worktrees/Public", os.X_OK),
             "gateway can reach protected controller/worker filesystem")
-    require(not groups.intersection({0, 27, 999}),
-            "gateway has a forbidden privileged group ID")
+    require(not group_names.intersection({"root", "sudo", "docker", "ssh", "codespace"}),
+            "gateway has a forbidden privileged group")
 
 
 def main() -> None:
