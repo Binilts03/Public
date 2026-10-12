@@ -264,6 +264,30 @@ separately threat-modelled before use. Codespace shutdown terminates its
 running worker because this stage deliberately does not install a persistent
 supervisor. A successful localhost test is NOT production readiness.
 
+## Zero-model-inference tunnel-client delivery (separate optional transport)
+
+A pinned, non-secret `openai/tunnel-client` setup is now tracked in
+[`tunnel/README.md`](tunnel/README.md). It references existing
+`tunnel_6acd09e0298481919ac84778501b0aef`, forwards only the local
+`http://127.0.0.1:8765/mcp` channel, and uses a separate
+`chatgpt-tunnel` Linux UID (not controller or worker). The installation
+script does **not** reinstall or re-enroll the worker, make Codespaces ports
+public, start a service, or invoke paid model inference.
+
+```bash
+cd /workspaces/Public
+git pull --ff-only origin experiments/chatgpt-workspace-qualification
+python3 research/chatgpt-workspace-qualification/deploy/tunnel/manage.py validate
+```
+
+Installation, runtime-key provisioning, doctor, and foreground start are
+**distinct, explicit gates** documented in the tunnel README. Staging and
+offline CI passing do not imply the tunnel has been installed or connected
+in the live Codespace. Tunnel transport itself uses a Platform runtime key;
+its billing status has not been established. The browser-facing OAuth
+authorization-server reachability remains an independent blocker, even
+if the tunnel transports MCP traffic successfully.
+
 ## Public ingress is an additional user-controlled security gate
 
 Do **not** make Codespaces port 8765 public until the two results above and a host-identity review pass. GitHub's private forwarded-port authentication is not automatically compatible with ChatGPT's MCP OAuth client. A public forwarded port has no GitHub authentication; rely on the MCP OAuth boundary only after external discovery/authentication/negative tests succeed.
