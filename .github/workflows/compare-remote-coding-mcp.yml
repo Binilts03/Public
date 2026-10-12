@@ -35,6 +35,9 @@ jobs:
       - name: Regression - offline OpenAI tunnel client package qualification
         run: |
           python -m pytest -q research/chatgpt-workspace-qualification/deploy/tunnel/tests/test_tunnel_deployment.py
+      - name: Regression - strict resume of existing registered worker only
+        run: |
+          python -m pytest -q research/chatgpt-workspace-qualification/deploy/tests/test_codespaces_strict_worker_resume.py
       - name: Upstream targeted regression
         working-directory: /tmp/candidate-local-shell-mcp
         run: |
@@ -136,6 +139,8 @@ jobs:
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/codespaces-repair-runtime.py
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/codespaces-enroll-verify-worker.py
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/codespaces-reverify-enrolled-worker.py
+          python3 -m py_compile research/chatgpt-workspace-qualification/deploy/codespaces-resume-enrolled-worker.py
+          python3 -m py_compile research/chatgpt-workspace-qualification/deploy/tests/test_codespaces_strict_worker_resume.py
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/codespaces-probe-worker-launch.py
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/tunnel/manage.py
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/tunnel/tests/test_tunnel_deployment.py
