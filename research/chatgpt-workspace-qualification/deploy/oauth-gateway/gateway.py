@@ -336,6 +336,37 @@ def require_dedicated_gateway_identity() -> None:
             "gateway has a forbidden privileged group")
 
 
+class BoundedLoopbackServer(ThreadingHTTPServer):
+    """Reject excess sockets before spawning handler threads.
+
+    Bound concurrency and header-read timeouts protect the private gateway
+    even if the external TLS ingress is misconfigured or rate limiting fails.
+    """
+    daemon_threads = True
+    request_queue_size = 16
+
+    def __init__(self, server_address, handler_class):
+        self._connections = threading.BoundedSemaphore(16)
+        super().__init__(server_address, handler_class)
+
+    def process_request(self, request, client_address):
+        request.settimeout(6)
+        if not self._connections.acquire(blocking=False):
+            request.close()
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self._connections.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._connections.release()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Strict OAuth-only loopback ingress")
     parser.add_argument("command", choices=("check", "serve"))
@@ -351,7 +382,7 @@ def main() -> None:
         return
     require_dedicated_gateway_identity()
     print("OAUTH_GATEWAY_LOOPBACK_ONLY_READY_UNQUALIFIED_EXTERNAL_INGRESS", flush=True)
-    server = ThreadingHTTPServer((GATEWAY_HOST, GATEWAY_PORT), make_handler(contract))
+    server = BoundedLoopbackServer((GATEWAY_HOST, GATEWAY_PORT), make_handler(contract))
     server.serve_forever(poll_interval=0.5)
 
 
