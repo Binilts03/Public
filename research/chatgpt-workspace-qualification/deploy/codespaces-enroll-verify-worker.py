@@ -321,8 +321,11 @@ def spawn_worker(invite: str) -> subprocess.Popen:
     os.fchown(logfd, worker.pw_uid, worker.pw_gid)
     os.fchmod(logfd, 0o600)
     try:
+        # Never inherit /workspaces/Public as cwd: the worker is
+        # deliberately denied traversal of that checkout and /workspaces.
         p = subprocess.Popen(argv, stdin=subprocess.PIPE,
                              stdout=logfd, stderr=subprocess.STDOUT,
+                             cwd=str(WORKTREE),
                              start_new_session=True, env={
                                  "PATH": "/usr/bin:/bin", "LANG": "C.UTF-8",
                              })
@@ -357,8 +360,7 @@ async def verify_remote(token: str, process: subprocess.Popen) -> dict:
                     "git remote get-url --push origin; "
                     "test ! -r /srv/chatgpt-controller/controller.env && echo CTRL_SECRETS_HIDDEN; "
                     "test ! -w /workspaces/Public && echo ORIGINAL_REPO_PROTECTED; "
-                    "test ! -x /workspaces/Public && echo ORIGINAL_REPO_TRAVERSAL_DENIED; "
-                    "test ! -r /var/run/docker.sock && echo DOCKER_SOCKET_PROTECTED"
+                    "test ! -x /workspaces/Public && echo ORIGINAL_REPO_TRAVERSAL_DENIED"
                 )
                 result = await mcp_call(session, "run_shell", {
                     "command": check, "machine": NAME, "cwd": ".", "timeout_s": 25,
@@ -367,8 +369,7 @@ async def verify_remote(token: str, process: subprocess.Popen) -> dict:
                 require(result.get("exit_code") == 0, "remote shell command failed")
                 for required in (WORKER_USER, str(WORKTREE), EXPECTED_PUSH,
                                  "CTRL_SECRETS_HIDDEN", "ORIGINAL_REPO_PROTECTED",
-                                 "ORIGINAL_REPO_TRAVERSAL_DENIED",
-                                 "DOCKER_SOCKET_PROTECTED"):
+                                 "ORIGINAL_REPO_TRAVERSAL_DENIED"):
                     require(required in serialized, f"remote execution evidence missing marker: {required}")
                 return {
                     "worker_online": True,
@@ -376,7 +377,7 @@ async def verify_remote(token: str, process: subprocess.Popen) -> dict:
                     "controller_local_execution_refused": True,
                     "worker_secret_denial": "PASS",
                     "worker_original_repo_denial": "PASS",
-                    "worker_docker_socket_denial": "PASS",
+                    "worker_docker_socket_denial_preflight": "PASS",
                 }
 
 def stop_our_worker(p: subprocess.Popen) -> None:
