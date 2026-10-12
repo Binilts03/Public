@@ -29,6 +29,9 @@ jobs:
       - name: Install into runner only
         run: |
           python -m pip install --disable-pip-version-check -e '/tmp/candidate-local-shell-mcp[dev]'
+      - name: Regression - fail-closed Codespaces worker registration recovery
+        run: |
+          python -m pytest -q research/chatgpt-workspace-qualification/deploy/tests/test_codespaces_worker_registry.py
       - name: Upstream targeted regression
         working-directory: /tmp/candidate-local-shell-mcp
         run: |
@@ -131,6 +134,7 @@ jobs:
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/codespaces-enroll-verify-worker.py
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/codespaces-diagnose-workspaces.py
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/codespaces-diagnose-worker-enrollment.py
+          python3 -m py_compile research/chatgpt-workspace-qualification/deploy/tests/test_codespaces_worker_registry.py
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/tests/test_codespaces_runtime_permissions.py
           python3 - <<'PY'
           from pathlib import Path
@@ -191,6 +195,8 @@ jobs:
           assert 'gh codespace ports visibility' not in attest
           assert 'git push' not in attest
           assert 'cwd=str(WORKTREE)' in attest
+          assert 'require_clean_worker_registration()' in attest
+          assert 'controller already has a worker registration; do not reenroll' in attest
           assert 'worker_docker_socket_denial_preflight' in attest
           assert 'test ! -r /var/run/docker.sock' not in attest
           diag=(root/'codespaces-diagnose-worker-enrollment.py').read_text()
