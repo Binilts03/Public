@@ -139,10 +139,25 @@ def require_host() -> None:
     require(run_silent(["/usr/sbin/runuser", "-u", WORKER, "--", "test", "!", "-r",
                         "/srv/chatgpt-controller/controller.env"]),
             "worker can read controller secrets")
+
+
+
+def require_live_services() -> None:
+    """Only outbound tunnel connection depends on the running MCP services.
+
+    Installation, offline validation, and key provisioning must remain possible
+    after an idle Codespace has shut down its controller and worker. Never
+    restart or reenroll either process as a side effect of tunnel management.
+    """
     require(run_silent(["pgrep", "-u", CONTROLLER, "-f", "nondumpable_mcp_entrypoint.py"]),
-            "controller is not running")
+            "controller is not running; tunnel installation is still allowed")
     require(run_silent(["pgrep", "-u", WORKER, "-f", "local_shell_mcp.remote_worker"]),
-            "existing registered worker is not running; do not re-enroll")
+            "existing registered worker is not running; preserve identity, do not re-enroll")
+    try:
+        with socket.create_connection(("127.0.0.1", 8765), timeout=2):
+            pass
+    except OSError:
+        raise Refusal("controller loopback port is not reachable; do not start tunnel") from None
 
 
 def read_release_zip(data: bytes) -> dict[str, bytes]:
@@ -275,6 +290,7 @@ def cmd_key() -> None:
 def cmd_client(verb: str) -> None:
     require_host()
     installed_gate()
+    require_live_services()
     require(private_file(KEY_FILE, RUN_AS, 0o600),
             "runtime key not provisioned or not private")
     key = KEY_FILE.read_text(encoding="ascii")
