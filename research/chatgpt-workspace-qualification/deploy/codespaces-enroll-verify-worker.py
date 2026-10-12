@@ -384,7 +384,34 @@ def spawn_worker(invite: str) -> subprocess.Popen:
         raise
     return p
 
-async def verify_remote(token: str, process: subprocess.Popen) -> dict:
+def verify_remote_stdout(result: dict) -> None:
+    """Verify ACTUAL remote command stdout, not echoed command arguments.
+
+    Upstream CommandResult includes a 'command' field, so searching a dumped
+    payload for an echo sentinel produces a false-positive proof. Every
+    asserted line must be present in the independently returned stdout.
+    """
+    require(isinstance(result, dict), "remote shell result has invalid shape")
+    require(result.get("exit_code") == 0, "remote shell command failed")
+    require(result.get("timed_out") is False, "remote shell timed out")
+    require(result.get("truncated") is False, "remote shell output was truncated")
+    require(isinstance(result.get("stdout"), str),
+            "remote shell stdout is absent or invalid")
+    expected = [
+        WORKER_USER,
+        str(WORKTREE),
+        str(WORKTREE),
+        EXPECTED_PUSH,
+        "CTRL_SECRETS_HIDDEN",
+        "ORIGINAL_REPO_PROTECTED",
+        "ORIGINAL_REPO_TRAVERSAL_DENIED",
+    ]
+    actual = result["stdout"].splitlines()
+    require(actual == expected,
+            "remote stdout did not exactly match independently required identity, workspace and denial checks")
+
+
+async def verify_remote(token: str, process: subprocess.Popen | None) -> dict:
     async with httpx.AsyncClient(headers={"Authorization": "Bearer " + token},
                                   timeout=httpx.Timeout(20, read=90)) as http:
         async with streamable_http_client(HOST + "/mcp", http_client=http) as streams:
@@ -392,7 +419,8 @@ async def verify_remote(token: str, process: subprocess.Popen) -> dict:
                 await session.initialize()
                 deadline = time.monotonic() + 45
                 while time.monotonic() < deadline:
-                    require(process.poll() is None, "worker process exited during enrollment")
+                    if process is not None:
+                        require(process.poll() is None, "worker process exited during enrollment")
                     inventory = await mcp_call(session, "remote_manage", {"action": "list"})
                     entries = inventory.get("machines", [])
                     if any(x.get("name") == NAME and x.get("status") == "online"
@@ -402,23 +430,22 @@ async def verify_remote(token: str, process: subprocess.Popen) -> dict:
                 else:
                     raise GateFailure("worker did not appear online within verification window")
                 check = (
+                    "set -eu; "
                     "id -un; "
                     "pwd; "
                     "git rev-parse --show-toplevel; "
                     "git remote get-url --push origin; "
-                    "test ! -r /srv/chatgpt-controller/controller.env && echo CTRL_SECRETS_HIDDEN; "
-                    "test ! -w /workspaces/Public && echo ORIGINAL_REPO_PROTECTED; "
-                    "test ! -x /workspaces/Public && echo ORIGINAL_REPO_TRAVERSAL_DENIED"
+                    "test ! -r /srv/chatgpt-controller/controller.env; "
+                    "printf 'CTRL_SECRETS_HIDDEN\n'; "
+                    "test ! -w /workspaces/Public; "
+                    "printf 'ORIGINAL_REPO_PROTECTED\n'; "
+                    "test ! -x /workspaces/Public; "
+                    "printf 'ORIGINAL_REPO_TRAVERSAL_DENIED\n'"
                 )
                 result = await mcp_call(session, "run_shell", {
                     "command": check, "machine": NAME, "cwd": ".", "timeout_s": 25,
                 })
-                serialized = json.dumps(result)
-                require(result.get("exit_code") == 0, "remote shell command failed")
-                for required in (WORKER_USER, str(WORKTREE), EXPECTED_PUSH,
-                                 "CTRL_SECRETS_HIDDEN", "ORIGINAL_REPO_PROTECTED",
-                                 "ORIGINAL_REPO_TRAVERSAL_DENIED"):
-                    require(required in serialized, f"remote execution evidence missing marker: {required}")
+                verify_remote_stdout(result)
                 return {
                     "worker_online": True,
                     "remote_read_only_command": "PASS",
