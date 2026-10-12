@@ -133,6 +133,7 @@ def test_install_is_independent_of_controller_and_worker_processes(tmp_path, mon
         name: name.encode("utf-8") for name in m.EXPECTED_FILES
     })
     monkeypatch.setattr(m.os, "chown", lambda *args: None)
+    monkeypatch.setattr(m, "installed_gate", lambda: None)
     monkeypatch.setattr(
         m, "require_live_services",
         lambda: pytest.fail("offline installation unexpectedly needs running worker/controller"),
@@ -140,6 +141,7 @@ def test_install_is_independent_of_controller_and_worker_processes(tmp_path, mon
     m.cmd_install()
     assert m.BINARY.is_file()
     assert m.INSTALLED_PROFILE.read_text(encoding="utf-8") == m.PROFILE_TEXT
+    assert stat.S_IMODE(m.BASE.stat().st_mode) == 0o755
     assert not m.KEY_FILE.exists()
     with pytest.raises(m.Refusal, match="install paths already exist"):
         m.cmd_install()
@@ -160,3 +162,97 @@ def test_live_service_checks_apply_only_to_tunnel_activation(monkeypatch):
     for verb in ("doctor", "run"):
         with pytest.raises(m.Refusal, match="controller is not running"):
             m.cmd_client(verb)
+
+
+
+@pytest.fixture
+def pristine_installed_tree(tmp_path, monkeypatch):
+    """Disposable substitute; no real Codespaces filesystem or identity touched."""
+    import os
+    import pwd
+    base = tmp_path / "install"
+    private = tmp_path / "runtime"
+    base.mkdir(mode=0o700)
+    base.chmod(0o700)
+    private.mkdir(mode=0o700)
+    private.chmod(0o700)
+    for name in m.EXPECTED_FILES | {"profile.yaml"}:
+        p = base / name
+        p.write_text(m.PROFILE_TEXT if name == "profile.yaml" else "disposable-test-asset")
+        p.chmod(0o755 if name in {"tunnel-client", "cloudflared"} else 0o644)
+    monkeypatch.setattr(m, "BASE", base)
+    monkeypatch.setattr(m, "PRIVATE", private)
+    monkeypatch.setattr(m, "KEY_FILE", private / "runtime.key")
+    uid = os.getuid()
+    assert pwd.getpwuid(uid).pw_uid == uid
+    return base, private, uid
+
+
+def test_stage_repair_is_pristine_only_and_no_file_is_mutated(pristine_installed_tree):
+    import os
+    base, private, uid = pristine_installed_tree
+    prior = {name: (base / name).read_bytes() for name in m.EXPECTED_FILES | {"profile.yaml"}}
+    assert m.verify_pristine_install(root_uid=uid, tunnel_uid=uid) == 0o700
+    m.repair_verified_directory(owner_uid=uid)
+    assert stat.S_IMODE(base.stat().st_mode) == 0o755
+    assert m.verify_pristine_install(root_uid=uid, tunnel_uid=uid) == 0o755
+    assert {name: (base / name).read_bytes() for name in prior} == prior
+    assert list(private.iterdir()) == []
+    with pytest.raises(m.Refusal, match="changed before repair"):
+        m.repair_verified_directory(owner_uid=uid)
+
+
+def test_stage_repair_refuses_unexpected_files_secrets_symlinks_and_modes(pristine_installed_tree):
+    base, private, uid = pristine_installed_tree
+    original = base / "profile.yaml"
+    original.write_text("malicious-profile")
+    with pytest.raises(m.Refusal, match="profile differs"):
+        m.verify_pristine_install(root_uid=uid, tunnel_uid=uid)
+    original.write_text(m.PROFILE_TEXT)
+    (base / "intruder").write_text("unknown")
+    with pytest.raises(m.Refusal, match="unexpected files"):
+        m.verify_pristine_install(root_uid=uid, tunnel_uid=uid)
+    (base / "intruder").unlink()
+    original.unlink()
+    original.symlink_to(private / "runtime.key")
+    with pytest.raises(m.Refusal, match="ownership, kind or mode"):
+        m.verify_pristine_install(root_uid=uid, tunnel_uid=uid)
+    original.unlink()
+    original.write_text(m.PROFILE_TEXT)
+    original.chmod(0o644)
+    binary = base / "tunnel-client"
+    binary.chmod(0o777)
+    with pytest.raises(m.Refusal, match="ownership, kind or mode"):
+        m.verify_pristine_install(root_uid=uid, tunnel_uid=uid)
+    binary.chmod(0o755)
+    (private / "runtime.key").write_text("fake-fixture-secret")
+    with pytest.raises(m.Refusal, match="not pristine"):
+        m.verify_pristine_install(root_uid=uid, tunnel_uid=uid)
+
+
+def test_install_mode_ignores_restrictive_umask(tmp_path, monkeypatch):
+    import os
+    import pwd
+    owner = pwd.getpwuid(os.getuid()).pw_name
+    monkeypatch.setattr(m, "BASE", tmp_path / "bundle")
+    monkeypatch.setattr(m, "PRIVATE", tmp_path / "private")
+    monkeypatch.setattr(m, "INSTALLED_PROFILE", m.BASE / "profile.yaml")
+    monkeypatch.setattr(m, "BINARY", m.BASE / "tunnel-client")
+    monkeypatch.setattr(m, "KEY_FILE", m.PRIVATE / "runtime.key")
+    monkeypatch.setattr(m, "RUN_AS", owner)
+    monkeypatch.setattr(m, "require_host", lambda: None)
+    monkeypatch.setattr(m, "ensure_separate_user", lambda: None)
+    monkeypatch.setattr(m, "download_release", lambda: {
+        name: name.encode("ascii") for name in m.EXPECTED_FILES
+    })
+    monkeypatch.setattr(m.os, "chown", lambda *args: None)
+    monkeypatch.setattr(m, "installed_gate", lambda: None)
+    old_umask = os.umask(0o077)
+    try:
+        m.cmd_install()
+    finally:
+        os.umask(old_umask)
+    assert stat.S_IMODE(m.BASE.stat().st_mode) == 0o755
+    assert stat.S_IMODE(m.PRIVATE.stat().st_mode) == 0o700
+    assert stat.S_IMODE(m.INSTALLED_PROFILE.stat().st_mode) == 0o644
+    assert stat.S_IMODE(m.BINARY.stat().st_mode) == 0o755
