@@ -228,7 +228,11 @@ def cmd_install() -> None:
     archive = download_release()
     ensure_separate_user()
     tunnel = pwd.getpwnam(RUN_AS)
-    BASE.mkdir(mode=0o755)
+    # Start root-private; open permissions only after all verified files land.
+    # mkdir(mode=0o755) is NOT enough: a restrictive inherited umask can
+    # silently produce root:0700 and make the non-root tunnel UID unable to
+    # traverse its executable directory.
+    BASE.mkdir(mode=0o700)
     PRIVATE.mkdir(mode=0o700)
     os.chown(PRIVATE, tunnel.pw_uid, tunnel.pw_gid)
     for name in EXPECTED_FILES:
@@ -238,10 +242,93 @@ def cmd_install() -> None:
         destination.chmod(0o755 if name in {"tunnel-client", "cloudflared"} else 0o644)
     INSTALLED_PROFILE.write_text(PROFILE_TEXT, encoding="utf-8")
     INSTALLED_PROFILE.chmod(0o644)
+    # fchmod on the opened, non-symlink directory ignores inherited umask.
+    fd = os.open(BASE, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        os.fchmod(fd, 0o755)
+    finally:
+        os.close(fd)
+    # Fail before claiming success if post-install protections are inconsistent.
+    installed_gate()
     # No service is started; no external authentication or model invocation.
     print("TUNNEL_PINNED_RELEASE_INSTALLED_NO_DAEMON")
     print("TUNNEL_UID_ISOLATION_PASS")
     print("NO_KEY_NO_WORKER_ENROLLMENT_NO_PORT_CHANGES_NO_GIT_WRITES")
+
+
+def verify_pristine_install(*, root_uid: int = 0, tunnel_uid: int | None = None) -> int:
+    """Verify precisely the prior staged installation before a mode repair.
+
+    This is a narrow, explicit repair of an installer-created root:0700
+    directory. Refuse symlinks, foreign files, untrusted ownership/modes,
+    unexpected private state, or an already provisioned runtime key.
+    """
+    if tunnel_uid is None:
+        tunnel_uid = pwd.getpwnam(RUN_AS).pw_uid
+    base_st = BASE.lstat()
+    require(stat.S_ISDIR(base_st.st_mode) and base_st.st_uid == root_uid
+            and stat.S_IMODE(base_st.st_mode) in (0o700, 0o755),
+            "tunnel install directory is not an expected root-owned staging directory")
+    fd = os.open(BASE, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        st = os.fstat(fd)
+        require(st.st_ino == base_st.st_ino and st.st_dev == base_st.st_dev,
+                "install directory changed during inspection")
+        require(set(os.listdir(fd)) == EXPECTED_FILES | {"profile.yaml"},
+                "installed release contains missing or unexpected files")
+        for name in sorted(EXPECTED_FILES | {"profile.yaml"}):
+            item = os.stat(name, dir_fd=fd, follow_symlinks=False)
+            expected_mode = 0o755 if name in {"tunnel-client", "cloudflared"} else 0o644
+            require(stat.S_ISREG(item.st_mode)
+                    and item.st_uid == root_uid
+                    and stat.S_IMODE(item.st_mode) == expected_mode,
+                    "installed release file ownership, kind or mode invalid")
+        profile_fd = os.open("profile.yaml", os.O_RDONLY | os.O_NOFOLLOW, dir_fd=fd)
+        try:
+            with os.fdopen(profile_fd, "r", encoding="utf-8") as stream:
+                require(stream.read() == PROFILE_TEXT, "installed tunnel profile differs")
+        finally:
+            # fdopen closes the descriptor in normal and exceptional exits.
+            pass
+        runtime = PRIVATE.lstat()
+        require(stat.S_ISDIR(runtime.st_mode)
+                and runtime.st_uid == tunnel_uid
+                and stat.S_IMODE(runtime.st_mode) == 0o700,
+                "tunnel private runtime ownership/mode invalid")
+        require(not any(PRIVATE.iterdir()),
+                "runtime directory is not pristine; no mode repair permitted")
+        require(not KEY_FILE.exists() and not KEY_FILE.is_symlink(),
+                "runtime key already exists; no mode repair permitted")
+        return stat.S_IMODE(st.st_mode)
+    finally:
+        os.close(fd)
+
+
+def cmd_inspect_install() -> None:
+    require_host()
+    mode = verify_pristine_install()
+    print("TUNNEL_PRISTINE_INSTALL_VERIFIED")
+    print("TUNNEL_ROOT_DIRECTORY_MODE=" + format(mode, "04o"))
+    print("NO_REPAIR_NO_KEY_READ_NO_NETWORK_NO_SERVICE_CHANGES")
+    if mode == 0o700:
+        print("TUNNEL_MODE_REPAIR_ELIGIBLE_AFTER_OPERATOR_REVIEW")
+
+
+def cmd_repair_install_mode() -> None:
+    require_host()
+    mode = verify_pristine_install()
+    require(mode == 0o700, "repair only accepts pristine root:0700 install")
+    fd = os.open(BASE, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        st = os.fstat(fd)
+        require(st.st_uid == 0 and stat.S_IMODE(st.st_mode) == 0o700,
+                "install directory changed before repair")
+        os.fchmod(fd, 0o755)
+    finally:
+        os.close(fd)
+    installed_gate()
+    print("TUNNEL_INSTALL_MODE_REPAIRED_ROOT_0755")
+    print("NO_BINARY_REPLACEMENT_NO_KEY_NO_NETWORK_NO_SERVICE_CHANGES")
 
 
 def installed_gate() -> None:
@@ -323,9 +410,9 @@ def cmd_client(verb: str) -> None:
 
 
 def main() -> None:
-    require(len(sys.argv) == 2, "usage: manage.py validate|install|key|doctor|run")
+    require(len(sys.argv) == 2, "usage: manage.py validate|inspect-install|repair-install-mode|install|key|doctor|run")
     verb = sys.argv[1]
-    require(verb in {"validate", "install", "key", "doctor", "run"},
+    require(verb in {"validate", "inspect-install", "repair-install-mode", "install", "key", "doctor", "run"},
             "unsupported operation")
     validate_profile(PROFILE.read_text(encoding="utf-8"))
     if verb == "validate":
@@ -333,6 +420,10 @@ def main() -> None:
         print("NO_DOWNLOAD_NO_INSTALL_NO_MODEL_CALL_NO_GIT_WRITES")
     elif verb == "install":
         cmd_install()
+    elif verb == "inspect-install":
+        cmd_inspect_install()
+    elif verb == "repair-install-mode":
+        cmd_repair_install_mode()
     elif verb == "key":
         cmd_key()
     else:
