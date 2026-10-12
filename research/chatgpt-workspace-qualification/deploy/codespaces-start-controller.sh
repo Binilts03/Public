@@ -115,5 +115,5 @@ echo 'LOCAL_CONTROLLER_GATE_PASS OAuth metadata, PKCE, unauthenticated denial, a
 echo "PUBLIC_BASE=$PUBLIC_BASE"
 echo "MCP_URL=$PUBLIC_BASE/mcp"
 echo 'PORT_VISIBILITY_UNCHANGED: Codespaces forwarded port is not made public by this script.'
-echo 'CONTROLLER_ONLY: worker not enrolled, so coding execution is intentionally unavailable.'
+echo 'CONTROLLER_ONLY: this script does not start the worker; existing enrollment is preserved.'
 echo 'OAuth admin PIN is stored in controller.env; do not paste it into GitHub, chat or logs.'
