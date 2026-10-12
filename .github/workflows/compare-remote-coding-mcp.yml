@@ -38,6 +38,9 @@ jobs:
       - name: Regression - isolated OAuth-only gateway denial and PKCE contract
         run: |
           python -m pytest -q research/chatgpt-workspace-qualification/deploy/oauth-gateway/test_gateway.py
+      - name: Regression - OAuth-only public edge dry-run and read-only preflight
+        run: |
+          python -m pytest -q research/chatgpt-workspace-qualification/deploy/oauth-gateway/test_ingress_preflight.py
       - name: Regression - strict resume of existing registered worker only
         run: |
           python -m pytest -q research/chatgpt-workspace-qualification/deploy/tests/test_codespaces_strict_worker_resume.py
@@ -151,6 +154,9 @@ jobs:
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/codespaces-probe-worker-launch.py
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/oauth-gateway/gateway.py
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/oauth-gateway/test_gateway.py
+          python3 -m py_compile research/chatgpt-workspace-qualification/deploy/oauth-gateway/qualify_ingress.py
+          python3 -m py_compile research/chatgpt-workspace-qualification/deploy/oauth-gateway/cloudflare_ingress.py
+          python3 -m py_compile research/chatgpt-workspace-qualification/deploy/oauth-gateway/test_ingress_preflight.py
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/tunnel/manage.py
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/tunnel/tests/test_tunnel_deployment.py
           python3 research/chatgpt-workspace-qualification/deploy/tunnel/manage.py validate
