@@ -102,9 +102,38 @@ def require_host() -> None:
             "only pinned Linux amd64 artifact supported")
     require(os.geteuid() == 0 and os.environ.get("SUDO_USER") == "codespace",
             "run as sudo from Codespaces 'codespace' owner")
-    require(Path("/workspaces/Public").is_dir(), "expected Codespaces checkout absent")
-    require(Path("/opt/public-chatgpt-mcp/codespaces-isolation-qualified").is_file(),
-            "controller/worker isolation attestation missing")
+    workspace = Path("/workspaces/Public")
+    require(workspace.is_dir() and not workspace.is_symlink(),
+            "expected original Public Codespaces checkout absent")
+    require(subprocess.check_output(
+        ["/usr/bin/git", "-C", str(workspace), "branch", "--show-current"],
+        stderr=subprocess.DEVNULL, timeout=8, text=True,
+    ).strip() == "experiments/chatgpt-workspace-qualification",
+            "only the Public qualification branch is authorized")
+    require(subprocess.check_output(
+        ["/usr/bin/git", "-C", str(workspace), "remote", "get-url", "origin"],
+        stderr=subprocess.DEVNULL, timeout=8, text=True,
+    ).strip().rstrip("/") in (
+        "https://github.com/Binilts03/Public",
+        "https://github.com/Binilts03/Public.git",
+    ), "original Codespace checkout must be Binilts03/Public")
+    evidence = Path("/opt/public-chatgpt-mcp/codespaces-isolation-qualified")
+    require(evidence.is_file() and not evidence.is_symlink()
+            and evidence.stat().st_uid == 0
+            and stat.S_IMODE(evidence.stat().st_mode) == 0o600,
+            "root-owned private controller/worker attestation missing")
+    controller_config = Path("/srv/chatgpt-controller/controller.env")
+    require(private_file(controller_config, CONTROLLER, 0o600),
+            "controller OAuth config is not isolated")
+    # Do not echo private configuration. Check only fixed mandatory boundaries.
+    config_lines = set(controller_config.read_text(encoding="utf-8").splitlines())
+    for required_line in (
+        "LOCAL_SHELL_MCP_DISABLE_LOCAL=true",
+        "LOCAL_SHELL_MCP_REMOTE_ENABLED=true",
+        "LOCAL_SHELL_MCP_AUTH_MODE=oauth",
+        "LOCAL_SHELL_MCP_AUTH_BYPASS_LOCALHOST=false",
+    ):
+        require(required_line in config_lines, "controller authorization boundary changed")
     require(run_silent(["/usr/sbin/runuser", "-u", WORKER, "--", "test", "!", "-x", "/workspaces"]),
             "worker access to original workspace is unsafe")
     require(run_silent(["/usr/sbin/runuser", "-u", WORKER, "--", "test", "!", "-r",
