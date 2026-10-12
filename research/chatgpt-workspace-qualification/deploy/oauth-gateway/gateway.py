@@ -11,6 +11,8 @@ import argparse
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import http.client
+import os
+import pwd
 import json
 import re
 import threading
@@ -205,7 +207,7 @@ def make_handler(contract: Contract, *, upstream_port: int = UPSTREAM_PORT):
             self.send_header("X-Frame-Options", "DENY")
             if content_type.startswith("text/html"):
                 self.send_header("Content-Security-Policy",
-                                 "default-src 'none'; style-src 'unsafe-inline'; "
+                                 "default-src 'none'; style-src 'unsafe-inline'; img-src data:; "
                                  "form-action 'self'; frame-ancestors 'none'")
             if location is not None:
                 self.send_header("Location", location)
@@ -268,6 +270,9 @@ def make_handler(contract: Contract, *, upstream_port: int = UPSTREAM_PORT):
                 elif url.query and route != "/oauth/authorize":
                     raise Refusal("metadata discovery has unexpected query")
                 contract.enforce_params(route, method, params)
+                # Re-check on every allowed OAuth operation; stale issuer or
+                # resource configuration must fail closed across restarts.
+                check_controller_contract(contract, port=upstream_port)
                 status, response_headers, data = request_upstream(
                     method, self.path, body, media, port=upstream_port)
                 location = response_headers.get("Location")
@@ -309,6 +314,26 @@ def make_handler(contract: Contract, *, upstream_port: int = UPSTREAM_PORT):
     return GatewayHandler
 
 
+def require_dedicated_gateway_identity() -> None:
+    # The edge-facing OAuth process must never inherit Codespaces credentials
+    # or the registered worker's filesystem/privileged Linux groups.
+    user = pwd.getpwuid(os.geteuid())
+    require(user.pw_name == "chatgpt-oauth-gateway" and os.geteuid() != 0,
+            "serve requires an isolated unprivileged chatgpt-oauth-gateway user")
+    require(user.pw_shell == "/usr/sbin/nologin",
+            "gateway account must have a nologin shell")
+    groups = set(os.getgroups())
+    require(all(os.geteuid() != other.pw_uid for other in
+                (pwd.getpwnam("chatgpt-controller"), pwd.getpwnam("chatgpt-worker"))),
+            "gateway must have a distinct controller/worker identity")
+    require(not os.access("/workspaces", os.X_OK)
+            and not os.access("/srv/chatgpt-controller/controller.env", os.R_OK)
+            and not os.access("/srv/chatgpt-worker/worktrees/Public", os.X_OK),
+            "gateway can reach protected controller/worker filesystem")
+    require(not groups.intersection({0, 27, 999}),
+            "gateway has a forbidden privileged group ID")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Strict OAuth-only loopback ingress")
     parser.add_argument("command", choices=("check", "serve"))
@@ -322,6 +347,7 @@ def main() -> None:
     if args.command == "check":
         print("OAUTH_GATEWAY_CONTROLLER_CONTRACT_PASS_NO_NETWORK_LISTENER")
         return
+    require_dedicated_gateway_identity()
     print("OAUTH_GATEWAY_LOOPBACK_ONLY_READY_UNQUALIFIED_EXTERNAL_INGRESS", flush=True)
     server = ThreadingHTTPServer((GATEWAY_HOST, GATEWAY_PORT), make_handler(contract))
     server.serve_forever(poll_interval=0.5)
