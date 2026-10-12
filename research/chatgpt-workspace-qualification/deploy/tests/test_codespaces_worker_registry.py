@@ -14,7 +14,8 @@ import time
 
 import pytest
 
-SCRIPT = Path(__file__).resolve().parents[1] / "codespaces-enroll-verify-worker.py"
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = ROOT / "codespaces-enroll-verify-worker.py"
 
 
 @pytest.fixture
@@ -99,3 +100,60 @@ def test_no_failed_invite_logging_or_restart_by_default():
     assert "print(invite)" not in source
     assert "print(token)" not in source
     assert 'test ! -r /var/run/docker.sock' not in source
+
+
+def test_remote_proof_reads_exact_stdout_not_echoed_command(gate):
+    module, registry, worker, put = gate
+    module.WORKTREE = worker / "worktrees/Public"
+    expected = [
+        module.WORKER_USER,
+        str(module.WORKTREE),
+        str(module.WORKTREE),
+        module.EXPECTED_PUSH,
+        "CTRL_SECRETS_HIDDEN",
+        "ORIGINAL_REPO_PROTECTED",
+        "ORIGINAL_REPO_TRAVERSAL_DENIED",
+    ]
+    good = {
+        "exit_code": 0, "timed_out": False, "truncated": False,
+        "stdout": "\n".join(expected) + "\n",
+        "stderr": "",
+        "command": "command under test",
+    }
+    module.verify_remote_stdout(good)
+
+    # The real backend echoes the full command in the 'command' response field.
+    # The original verifier incorrectly searched this field for PASS markers.
+    fake = {
+        **good,
+        "stdout": "\n".join(expected[:4]) + "\n",
+        "command": "\n".join(expected),
+    }
+    with pytest.raises(module.GateFailure):
+        module.verify_remote_stdout(fake)
+
+    for invalid in (
+        {**good, "exit_code": 1},
+        {**good, "timed_out": True},
+        {**good, "truncated": True},
+        {**good, "stdout": None},
+        {**good, "stdout": good["stdout"].replace(
+            "CTRL_SECRETS_HIDDEN\n", "",
+        )},
+        {**good, "stdout": good["stdout"] + "UNEXPECTED\n"},
+    ):
+        with pytest.raises(module.GateFailure):
+            module.verify_remote_stdout(invalid)
+
+
+def test_requalification_reuses_worker_not_invitation():
+    reverify = ROOT / "codespaces-reverify-enrolled-worker.py"
+    src = reverify.read_text(encoding="utf-8")
+    assert "module.verify_remote(token, None)" in src
+    assert "private_json(IDENTITY" in src
+    assert "hmac.compare_digest(worker_access, registered_access)" in src
+    assert "EXISTING_WORKER_REMOTE_STDOUT_AND_DENIAL_PASS" in src
+    assert "module.local_oauth(" in src
+    for danger in ("spawn_worker(", "create_invite(", "remote_manage\", {\"action\": \"invite",
+                   "git push", "os.killpg(", "chmod(", "chown("):
+        assert danger not in src, danger
