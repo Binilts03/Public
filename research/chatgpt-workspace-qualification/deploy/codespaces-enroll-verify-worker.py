@@ -41,6 +41,9 @@ CTRL_ROOT = Path("/srv/chatgpt-controller")
 WORKER_ROOT = Path("/srv/chatgpt-worker")
 WORKTREE = WORKER_ROOT / "worktrees/Public"
 VENV = Path("/opt/public-chatgpt-mcp/venv")
+# Always invoke runuser by absolute path: the worker launcher intentionally
+# removes /usr/sbin from PATH and an unqualified name cannot be executed.
+RUNUSER = Path("/usr/sbin/runuser")
 QUALIFIED = Path("/opt/public-chatgpt-mcp/codespaces-isolation-qualified")
 CONTROLLER_CONFIG = CTRL_ROOT / "controller.env"
 WORKER_CONFIG = WORKER_ROOT / "worker.env"
@@ -64,7 +67,7 @@ def require(condition: bool, reason: str) -> None:
 
 def as_user(user: str, argv: list[str]) -> bool:
     return subprocess.run(
-        ["runuser", "-u", user, "--", *argv],
+        [str(RUNUSER), "-u", user, "--", *argv],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=12,
         check=False,
     ).returncode == 0
@@ -143,6 +146,9 @@ def host_gate():
     require(os.geteuid() == 0 and os.environ.get("SUDO_USER") == "codespace",
             "run as sudo Python from the Codespaces owner account")
     require(len(sys.argv) == 1, "unexpected arguments")
+    require(RUNUSER.is_file() and os.access(RUNUSER, os.X_OK)
+            and RUNUSER.stat().st_uid == 0,
+            "root-owned /usr/sbin/runuser missing or not executable")
     require(QUALIFIED.is_file() and
             QUALIFIED.stat().st_uid == 0 and
             stat.S_IMODE(QUALIFIED.stat().st_mode) == 0o600,
@@ -189,7 +195,7 @@ def host_gate():
     require(subprocess.check_output(
         ["git", "-C", str(source), "rev-parse", "HEAD"], text=True).strip() ==
         PINNED_UPSTREAM, "root-owned MCP source pin mismatch")
-    git_base = ["runuser", "-u", WORKER_USER, "--", "env", "-i",
+    git_base = [str(RUNUSER), "-u", WORKER_USER, "--", "env", "-i",
                 "HOME=/srv/chatgpt-worker/home", "PATH=/usr/bin:/bin",
                 "GIT_TERMINAL_PROMPT=0", "git", "-C",
                 str(WORKER_ROOT / "git/Public")]
@@ -348,7 +354,7 @@ def spawn_worker(invite: str) -> subprocess.Popen:
         "LOCAL_SHELL_MCP_UI_ENABLED": "false",
         "LOCAL_SHELL_MCP_LIVE_WORKSPACE_ENABLED": "false",
     }
-    argv = ["runuser", "-u", WORKER_USER, "--", "env", "-i",
+    argv = [str(RUNUSER), "-u", WORKER_USER, "--", "env", "-i",
             *[f"{k}={v}" for k,v in kwargs.items()],
             str(VENV / "bin/python"), "-m", "local_shell_mcp.remote_worker",
             "connect", "--server", HOST, "--invite-stdin",
