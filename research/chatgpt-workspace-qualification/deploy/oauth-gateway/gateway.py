@@ -193,6 +193,15 @@ def make_handler(contract: Contract, *, upstream_port: int = UPSTREAM_PORT):
         server_version = "OAuthOnlyGateway"
         sys_version = ""
 
+        def parse_request(self):
+            # BaseHTTPRequestHandler normalizes leading '//' to '/', so check
+            # the original request-target before that parser can erase it.
+            raw = self.raw_requestline.split(b" ", 2)
+            if len(raw) >= 2 and raw[1].startswith(b"//"):
+                self.send_error(400, "Invalid request target")
+                return False
+            return super().parse_request()
+
         def log_message(self, fmt, *args):
             # Never log query strings, authorization codes, PINs, bearer tokens.
             pass
