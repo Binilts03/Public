@@ -67,6 +67,10 @@ jobs:
           E2E_REPORT: /tmp/public-real-process-e2e.json
         run: |
           python research/chatgpt-workspace-qualification/real_process_oauth_e2e.py
+      - name: Real pinned controller through isolated OAuth-only gateway E2E
+        if: success()
+        run: |
+          python research/chatgpt-workspace-qualification/deploy/oauth-gateway/real_gateway_e2e.py
       - name: Require recovery of a running job after MCP OS restart
         if: success()
         env:
