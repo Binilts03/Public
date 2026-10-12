@@ -284,12 +284,8 @@ def verify_pristine_install(*, root_uid: int = 0, tunnel_uid: int | None = None)
                     and stat.S_IMODE(item.st_mode) == expected_mode,
                     "installed release file ownership, kind or mode invalid")
         profile_fd = os.open("profile.yaml", os.O_RDONLY | os.O_NOFOLLOW, dir_fd=fd)
-        try:
-            with os.fdopen(profile_fd, "r", encoding="utf-8") as stream:
-                require(stream.read() == PROFILE_TEXT, "installed tunnel profile differs")
-        finally:
-            # fdopen closes the descriptor in normal and exceptional exits.
-            pass
+        with os.fdopen(profile_fd, "r", encoding="utf-8") as stream:
+            require(stream.read() == PROFILE_TEXT, "installed tunnel profile differs")
         runtime = PRIVATE.lstat()
         require(stat.S_ISDIR(runtime.st_mode)
                 and runtime.st_uid == tunnel_uid
@@ -314,18 +310,22 @@ def cmd_inspect_install() -> None:
         print("TUNNEL_MODE_REPAIR_ELIGIBLE_AFTER_OPERATOR_REVIEW")
 
 
-def cmd_repair_install_mode() -> None:
-    require_host()
-    mode = verify_pristine_install()
-    require(mode == 0o700, "repair only accepts pristine root:0700 install")
+def repair_verified_directory(*, owner_uid: int = 0) -> None:
     fd = os.open(BASE, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         st = os.fstat(fd)
-        require(st.st_uid == 0 and stat.S_IMODE(st.st_mode) == 0o700,
+        require(st.st_uid == owner_uid and stat.S_IMODE(st.st_mode) == 0o700,
                 "install directory changed before repair")
         os.fchmod(fd, 0o755)
     finally:
         os.close(fd)
+
+
+def cmd_repair_install_mode() -> None:
+    require_host()
+    mode = verify_pristine_install()
+    require(mode == 0o700, "repair only accepts pristine root:0700 install")
+    repair_verified_directory()
     installed_gate()
     print("TUNNEL_INSTALL_MODE_REPAIRED_ROOT_0755")
     print("NO_BINARY_REPLACEMENT_NO_KEY_NO_NETWORK_NO_SERVICE_CHANGES")
