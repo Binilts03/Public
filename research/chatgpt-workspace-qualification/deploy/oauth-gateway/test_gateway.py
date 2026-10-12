@@ -284,3 +284,13 @@ def test_gateway_listener_is_loopback_only_and_connection_bounded():
             server._connections.release()
     finally:
         server.server_close()
+
+
+
+def test_raw_double_slash_cannot_reach_authorization_with_valid_parameters(active_servers):
+    port, seen = active_servers
+    before = len(seen)
+    url = "//oauth/authorize?" + urlencode(auth_params())
+    status, _, payload = call(port, "GET", url)
+    assert status == 400
+    assert len(seen) == before
