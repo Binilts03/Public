@@ -100,6 +100,41 @@ def read_controller_credentials() -> dict[str, str]:
             "controller external OAuth origin invalid")
     return data
 
+def require_clean_worker_registration() -> None:
+    """Read controller registry metadata before creating another worker invitation.
+
+    A missing worker-side identity alone does not prove that the controller
+    has no persisted registration. Print no tokens or invitation codes.
+    """
+    registry = CTRL_ROOT / "state/remote-workers.json"
+    require(registry.is_file() and not registry.is_symlink(),
+            "worker registry absent/untrusted; run read-only diagnostic")
+    info = registry.stat()
+    require(info.st_uid == pwd.getpwnam(CTRL_USER).pw_uid
+            and stat.S_IMODE(info.st_mode) == 0o600,
+            "worker registry is not controller-owned private state")
+    try:
+        payload = json.loads(registry.read_text(encoding="utf-8"))
+        require(isinstance(payload, dict) and payload.get("version") == 1,
+                "worker registry format invalid")
+        workers, invites = payload.get("workers"), payload.get("invites")
+        require(isinstance(workers, list) and isinstance(invites, list),
+                "worker registry fields invalid")
+        require(all(isinstance(row, dict) for row in workers + invites),
+                "worker registry records invalid")
+        require(not workers, "controller already has a worker registration; do not reenroll")
+        now = time.time()
+        require(not any(
+            float(row.get("expires_at", 0)) > now and not row.get("used", False)
+            for row in invites
+        ), "previous invitation remains active; do not create a second")
+    except (ValueError, TypeError, OverflowError):
+        raise GateFailure("invalid worker registry; no new invitation created") from None
+    for name in ("identity.json", "identity.json.tmp", "config.json", "config.json.tmp"):
+        require(not (WORKER_ROOT / "state" / name).exists(),
+                "saved worker identity/config present; diagnose before enrollment")
+
+
 def host_gate():
     require(os.geteuid() == 0 and os.environ.get("SUDO_USER") == "codespace",
             "run as sudo Python from the Codespaces owner account")
@@ -182,9 +217,7 @@ def host_gate():
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                             check=False).returncode != 0,
             "worker already running; do not duplicate or overwrite enrollment")
-    identity_file = WORKER_ROOT / "state/identity.json"
-    require(not identity_file.exists(),
-            "worker identity exists; do not issue a second invitation")
+    require_clean_worker_registration()
     with socket.create_connection(("127.0.0.1", 8765), timeout=3):
         pass
 
@@ -332,8 +365,13 @@ def spawn_worker(invite: str) -> subprocess.Popen:
     finally:
         os.close(logfd)
     require(p.stdin is not None, "worker invitation pipe unavailable")
-    p.stdin.write((invite + "\n").encode())
-    p.stdin.close()
+    try:
+        p.stdin.write((invite + "\n").encode())
+        p.stdin.close()
+    except BaseException:
+        # Failure writing invitation must not strand a privileged launcher.
+        stop_our_worker(p)
+        raise
     return p
 
 async def verify_remote(token: str, process: subprocess.Popen) -> dict:
