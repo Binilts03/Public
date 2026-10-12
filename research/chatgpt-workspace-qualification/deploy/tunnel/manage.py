@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import getpass
 import hashlib
+import hmac
 import io
 import os
 from pathlib import Path
@@ -387,6 +388,70 @@ def cmd_key() -> None:
     print("TUNNEL_RUNTIME_KEY_STORED_PRIVATE_NO_KEY_ECHO")
 
 
+def require_tunnel_stopped() -> None:
+    """Never replace a secret while its old value may remain in a live client."""
+    require(not run_silent(["pgrep", "-u", RUN_AS, "-x", "tunnel-client"]),
+            "tunnel client is still running; stop it with Ctrl+C first")
+    with socket.socket() as s:
+        s.settimeout(2)
+        require(s.connect_ex(("127.0.0.1", 8770)) != 0,
+                "tunnel health port is still listening; stop and diagnose before replacing key")
+
+
+def cmd_replace_key() -> None:
+    """Explicit atomic runtime-key rotation, with no key in argv, repo or logs."""
+    require_host()
+    installed_gate()
+    require(private_file(KEY_FILE, RUN_AS, 0o600),
+            "existing runtime key missing or not private")
+    require_tunnel_stopped()
+    require(sys.stdin.isatty(), "enter replacement key interactively")
+    old_info = KEY_FILE.lstat()
+    fresh = getpass.getpass("New OpenAI tunnel runtime key (hidden): ")
+    confirm = getpass.getpass("Confirm NEW runtime key (hidden): ")
+    require(hmac.compare_digest(fresh, confirm),
+            "new runtime key confirmation did not match")
+    require(fresh.startswith("sk-") and 32 <= len(fresh) <= 512
+            and fresh.isascii() and not any(c.isspace() for c in fresh),
+            "replacement must be a complete, non-whitespace Platform API key")
+    # Check that the new key is not the one we are replacing, without
+    # revealing either value or printing its hash.
+    require(not hmac.compare_digest(fresh, KEY_FILE.read_text(encoding="ascii")),
+            "new runtime key is identical to the rejected key")
+    require_tunnel_stopped()
+    tunnel = pwd.getpwnam(RUN_AS)
+    temp_path = None
+    try:
+        fd, name = tempfile.mkstemp(prefix=".runtime-key-", dir=PRIVATE)
+        temp_path = Path(name)
+        try:
+            os.fchown(fd, tunnel.pw_uid, tunnel.pw_gid)
+            os.fchmod(fd, 0o600)
+            os.write(fd, fresh.encode("ascii"))
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        current = KEY_FILE.lstat()
+        require(current.st_dev == old_info.st_dev and current.st_ino == old_info.st_ino
+                and private_file(KEY_FILE, RUN_AS, 0o600),
+                "runtime key changed during replacement")
+        require_tunnel_stopped()
+        os.replace(temp_path, KEY_FILE)
+        temp_path = None
+        directory_fd = os.open(PRIVATE, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+    require(private_file(KEY_FILE, RUN_AS, 0o600),
+            "rotated key permissions are not secure")
+    print("TUNNEL_RUNTIME_KEY_REPLACED_ATOMICALLY_NO_KEY_ECHO")
+    print("NO_MODEL_CALL_NO_DAEMON_NO_CONTROLLER_OR_WORKER_CHANGES")
+
+
 def cmd_client(verb: str) -> None:
     require_host()
     installed_gate()
@@ -423,9 +488,9 @@ def cmd_client(verb: str) -> None:
 
 
 def main() -> None:
-    require(len(sys.argv) == 2, "usage: manage.py validate|inspect-install|repair-install-mode|install|key|doctor|run")
+    require(len(sys.argv) == 2, "usage: manage.py validate|inspect-install|repair-install-mode|install|key|replace-key|doctor|run")
     verb = sys.argv[1]
-    require(verb in {"validate", "inspect-install", "repair-install-mode", "install", "key", "doctor", "run"},
+    require(verb in {"validate", "inspect-install", "repair-install-mode", "install", "key", "replace-key", "doctor", "run"},
             "unsupported operation")
     validate_profile(PROFILE.read_text(encoding="utf-8"))
     if verb == "validate":
@@ -439,6 +504,8 @@ def main() -> None:
         cmd_repair_install_mode()
     elif verb == "key":
         cmd_key()
+    elif verb == "replace-key":
+        cmd_replace_key()
     else:
         cmd_client(verb)
 
