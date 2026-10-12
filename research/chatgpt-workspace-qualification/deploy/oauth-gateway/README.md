@@ -114,6 +114,99 @@ against the current private controller. It will correctly **refuse** before
 the controller has been migrated. The `serve` command also checks the
 dedicated identity and never exposes a public port.
 
+## Selected external-ingress provider and staging-only operator sequence
+
+**Chosen candidate:** a separate, locally managed **Cloudflare named
+Tunnel**, using a stable HTTPS hostname that the operator controls.
+The [Cloudflare ingress documentation](https://developers.cloudflare.com/tunnel/features/locally-managed-tunnels/configuration-file/)
+supports exact public hostnames, path regular expressions, a loopback HTTP
+service URL and a final `http_status:404` catch-all. Do not use the existing
+OpenAI `tunnel_id` as a Cloudflare tunnel UUID; these are different services
+with different credentials. No Cloudflare domain, account, tunnel UUID,
+credentials or DNS records have been supplied or touched.
+
+1. **Read-only Codespace preflight now (no migration or public request):**
+
+   ```bash
+   cd /workspaces/Public
+   python3 research/chatgpt-workspace-qualification/deploy/oauth-gateway/qualify_ingress.py local
+   ```
+
+   This reports only HTTP readiness, metadata categories, gateway UID/listener
+   presence, and whether controller PKCE S256 is available. It does not print
+   the admin PIN, OAuth token, API key, env file, or private worker state.
+   The current controller is expected to show an unmigrated Codespaces issuer
+   and a non-started gateway. GitHub Codespaces **port visibility cannot be
+   established by this command**; the operator must verify ports 8765, 8770
+   and 8781 are **Private** in the Codespaces PORTS UI before any start.
+
+2. **Offline, before installing any Cloudflare credentials**, render the
+   exact public ingress rule for a separately reviewed domain and a
+   **previously-created Cloudflare named tunnel** (example placeholders
+   are deliberately unusable as deployed configuration):
+
+   ```bash
+   python3 research/chatgpt-workspace-qualification/deploy/oauth-gateway/cloudflare_ingress.py \
+     --issuer https://auth.YOUR-DOMAIN.example \
+     --tunnel-uuid YOUR-CLOUDFLARE-TUNNEL-UUID
+   ```
+
+   With real inputs, the generator outputs a single OAuth hostname/path
+   allowlist to `http://127.0.0.1:8781`, an explicit `httpHostHeader`,
+   and a default-deny 404 catch-all. It neither creates nor configures a
+   tunnel. Cloudflare credentials belong in a separate account's private
+   `/srv/chatgpt-oauth-edge/credentials/<UUID>.json`, never in Git or in
+   the gateway. Do not reuse the OpenAI tunnel client's bundled `cloudflared`
+   daemon or its runtime API key to establish the OAuth edge.
+
+3. **Prior to issuer migration**, confirm the actual resource URL advertised
+   to ChatGPT by the MCP tunnel's rewritten Protected Resource Metadata.
+   Document the exact ChatGPT callback URI obtained in the *real* connection
+   UI. The current local controller's live issuer/audience must only be
+   changed after verifying these values, pinning the deployment, and
+   preparing a credential-preserving rollback. To compare after that reviewed
+   migration, run the **read-only** local check with both arguments:
+
+   ```bash
+   python3 research/chatgpt-workspace-qualification/deploy/oauth-gateway/qualify_ingress.py local \
+     --issuer https://auth.YOUR-DOMAIN.example \
+     --resource https://api.openai.com/v1/mcp/tunnel_6acd09e0298481919ac84778501b0aef
+   ```
+
+   A mismatch is a stop condition, **not permission to replace secrets or
+   reenroll the existing worker**.
+
+4. After an explicitly reviewed TLS/DNS publication and local gateway/edge
+   deployment, check only **public metadata and denial routes**, without
+   logging in or sending credentials:
+
+   ```bash
+   python3 research/chatgpt-workspace-qualification/deploy/oauth-gateway/qualify_ingress.py external \
+     --issuer https://auth.YOUR-DOMAIN.example
+   ```
+
+   The external probe verifies certificate/hostname validation, exact
+   authorization server metadata and independent 404 responses for the
+   MCP endpoint, worker routes, UI, downloads and health endpoints.
+   It refuses login redirects, non-404 exposure or issuer drift. It does
+   **not** guarantee PIN secrecy or a successful OAuth callback.
+
+5. **Other separate gates:** install and verify the dedicated
+   `chatgpt-oauth-gateway` Linux UID/ACL and `chatgpt-oauth-edge`
+   connector identity; validate hostname/DNS/certificate ownership and
+   Cloudflare routes (without Cloudflare Access interstitial redirects);
+   limit WAF/rate-limit logging so PINs, auth codes and full URLs do not land
+   in logs; add **only** the exact reviewed OAuth hostname to the pinned
+   OpenAI tunnel client's OAuth trusted origins; preserve worker isolation;
+   validate real browser PIN consent, callback and token exchange; then
+   invoke one minimally privileged tool from a normal ChatGPT chat.
+
+**Do not run any example that starts `gateway.py serve`, Cloudflare edge
+`cloudflared tunnel run`, or restarts/mutates the live controller.**
+A deployment script needs its own independent host-permission and port
+visibility verification before it can be offered as a production action.
+Cloudflare's external identity and stable hostname remain prerequisites.
+
 ## CI independent verification
 
 - `test_gateway.py`: real disposable HTTP server; denies unknown paths,
