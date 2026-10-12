@@ -79,6 +79,17 @@ codes and POST bodies as secrets; disable request-body, token and full-URL
 logging on the edge. Confirm real browser consent, callback delivery and
 token exchange. Document DNS, certificate control and rollback mechanics.
 
+OpenAI's documented connector-facing route is
+`<OPENAI_MCP_TUNNEL_BASE_URL>/v1/mcp/<tunnel_id>` (not the tunnel
+metadata/control-plane path `/v1/tunnel/<tunnel_id>`). For the
+current default host, the gateway's pinned audience is
+`https://api.openai.com/v1/mcp/tunnel_6acd09e0298481919ac84778501b0aef`. This exact audience is a **candidate** derived from
+the documented default base and must still be confirmed from the
+actual ChatGPT connector/rewritten protected-resource metadata before
+live issuer migration. Do not treat a successful synthetic JWT test as
+proof of the product-facing audience. OAuth authorization requests
+missing the agreed `resource` are refused.
+
 ## Predeployment configuration contract (NOT commands to run on live host)
 
 For a verified HTTPS issuer `https://auth.example.com`, a controller
@@ -87,7 +98,7 @@ migration would **later** require these *non-secret* environment values
 
 ```text
 LOCAL_SHELL_MCP_OAUTH_ISSUER=https://auth.example.com
-LOCAL_SHELL_MCP_OAUTH_RESOURCE=https://api.openai.com/v1/tunnel/tunnel_6acd09e0298481919ac84778501b0aef/mcp
+LOCAL_SHELL_MCP_OAUTH_RESOURCE=https://api.openai.com/v1/mcp/tunnel_6acd09e0298481919ac84778501b0aef
 ```
 
 These values are illustrative and **must not** be applied as-is. Changing
