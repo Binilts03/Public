@@ -291,3 +291,94 @@ def test_pristine_inspection_rejects_unsafe_special_modes(pristine_installed_tre
     base.chmod(unsafe_mode)
     with pytest.raises(m.Refusal, match="not an expected root-owned"):
         m.verify_pristine_install(root_uid=uid, tunnel_uid=uid)
+
+
+
+@pytest.fixture
+def replacement_key_fixture(tmp_path, monkeypatch):
+    """No Codespace paths, no real API keys or network access."""
+    import os
+    import pwd
+    import types
+    username = pwd.getpwuid(os.getuid()).pw_name
+    private = tmp_path / "runtime"
+    private.mkdir(mode=0o700)
+    private.chmod(0o700)
+    key_file = private / "runtime.key"
+    previous = "sk-proj-fixture-rejected-" + "A" * 38
+    key_file.write_text(previous)
+    key_file.chmod(0o600)
+    monkeypatch.setattr(m, "PRIVATE", private)
+    monkeypatch.setattr(m, "KEY_FILE", key_file)
+    monkeypatch.setattr(m, "RUN_AS", username)
+    monkeypatch.setattr(m, "require_host", lambda: None)
+    monkeypatch.setattr(m, "installed_gate", lambda: None)
+    monkeypatch.setattr(m, "require_tunnel_stopped", lambda: None)
+    monkeypatch.setattr(m.sys, "stdin", types.SimpleNamespace(isatty=lambda: True))
+    new = "sk-proj-fixture-valid-" + "B" * 38
+    return key_file, previous, new
+
+
+def test_explicit_key_replacement_atomic_private_and_non_echoed(replacement_key_fixture, monkeypatch, capsys):
+    key_file, old, new = replacement_key_fixture
+    inputs = iter([new, new])
+    monkeypatch.setattr(m.getpass, "getpass", lambda prompt: next(inputs))
+    m.cmd_replace_key()
+    assert key_file.read_text() == new
+    assert stat.S_IMODE(key_file.stat().st_mode) == 0o600
+    assert sorted(p.name for p in key_file.parent.iterdir()) == ["runtime.key"]
+    out = capsys.readouterr().out
+    assert "TUNNEL_RUNTIME_KEY_REPLACED_ATOMICALLY" in out
+    assert old not in out and new not in out
+
+
+@pytest.mark.parametrize("variant", ["mismatch", "same", "malformed"])
+def test_rejected_replacement_preserves_original(replacement_key_fixture, monkeypatch, variant):
+    key_file, old, new = replacement_key_fixture
+    inputs = {
+        "mismatch": [new, new + "a"],
+        "same": [old, old],
+        "malformed": ["incomplete", "incomplete"],
+    }
+    pairs = iter(inputs[variant])
+    monkeypatch.setattr(m.getpass, "getpass", lambda prompt: next(pairs))
+    with pytest.raises(m.Refusal):
+        m.cmd_replace_key()
+    assert key_file.read_text() == old
+    assert sorted(p.name for p in key_file.parent.iterdir()) == ["runtime.key"]
+
+
+def test_replacement_refuses_active_tunnel_without_prompt(replacement_key_fixture, monkeypatch):
+    key_file, old, new = replacement_key_fixture
+    def block():
+        raise m.Refusal("tunnel client is still running")
+    monkeypatch.setattr(m, "require_tunnel_stopped", block)
+    monkeypatch.setattr(
+        m.getpass, "getpass",
+        lambda prompt: pytest.fail("requested secret while live client still running"),
+    )
+    with pytest.raises(m.Refusal, match="still running"):
+        m.cmd_replace_key()
+    assert key_file.read_text() == old
+
+
+def test_replacement_write_failure_does_not_damage_old_secret(replacement_key_fixture, monkeypatch):
+    key_file, old, new = replacement_key_fixture
+    inputs = iter([new, new])
+    monkeypatch.setattr(m.getpass, "getpass", lambda prompt: next(inputs))
+    monkeypatch.setattr(m.os, "replace", lambda *args: (_ for _ in ()).throw(OSError("simulated disk failure")))
+    with pytest.raises(OSError):
+        m.cmd_replace_key()
+    assert key_file.read_text() == old
+    assert sorted(p.name for p in key_file.parent.iterdir()) == ["runtime.key"]
+
+
+def test_replacement_does_not_run_models_git_or_other_services():
+    src = SCRIPT.read_text(encoding="utf-8")
+    assert "def cmd_replace_key()" in src
+    assert "require_tunnel_stopped()" in src
+    assert "hmac.compare_digest" in src
+    assert "os.replace(temp_path, KEY_FILE)" in src
+    assert "tempfile.mkstemp" in src
+    assert "replace-key" in src
+    assert "NO_MODEL_CALL_NO_DAEMON_NO_CONTROLLER_OR_WORKER_CHANGES" in src
