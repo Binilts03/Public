@@ -41,6 +41,7 @@ SERVER = "http://127.0.0.1:8765"
 # Passed as a fixed no-secret script to an isolated worker via python -c.
 # No enrollment arguments, no registration, no credential deletion or rewrite.
 STRICT_WORKER_SOURCE = """
+# local_shell_mcp.remote_worker strict resume process marker for host liveness checks
 import asyncio
 from pathlib import Path
 from local_shell_mcp import remote
