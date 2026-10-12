@@ -124,6 +124,9 @@ jobs:
       - name: Static staged-package contract
         run: |
           python3 research/chatgpt-workspace-qualification/deploy/validate_staging.py
+      - name: Qualify exact OAuth-only ingress with SHA256-pinned real cloudflared (CI only)
+        run: |
+          python3 research/chatgpt-workspace-qualification/deploy/oauth-gateway/verify_cloudflared.py
       - name: Static Codespaces bootstrap syntax and no-live-deploy contract
         run: |
           bash -n research/chatgpt-workspace-qualification/deploy/codespaces-stage.sh
@@ -156,6 +159,7 @@ jobs:
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/oauth-gateway/test_gateway.py
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/oauth-gateway/qualify_ingress.py
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/oauth-gateway/cloudflare_ingress.py
+          python3 -m py_compile research/chatgpt-workspace-qualification/deploy/oauth-gateway/verify_cloudflared.py
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/oauth-gateway/test_ingress_preflight.py
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/tunnel/manage.py
           python3 -m py_compile research/chatgpt-workspace-qualification/deploy/tunnel/tests/test_tunnel_deployment.py
