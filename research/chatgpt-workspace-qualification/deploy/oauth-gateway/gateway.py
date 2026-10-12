@@ -155,7 +155,9 @@ def request_upstream(method: str, path: str, body: bytes | None = None,
         require(len(data) <= MAX_RESPONSE, "upstream OAuth response too large")
         require(response.getheader("Content-Encoding", "identity") in ("identity", ""),
                 "encoded OAuth responses are unsupported")
-        return response.status, dict(response.getheaders()), data
+        # ASGI/Uvicorn commonly emits lowercase header names. HTTP header
+        # lookup must be case-insensitive, particularly Location and media.
+        return response.status, {k.lower(): v for k, v in response.getheaders()}, data
     finally:
         conn.close()
 
@@ -275,13 +277,13 @@ def make_handler(contract: Contract, *, upstream_port: int = UPSTREAM_PORT):
                 check_controller_contract(contract, port=upstream_port)
                 status, response_headers, data = request_upstream(
                     method, self.path, body, media, port=upstream_port)
-                location = response_headers.get("Location")
+                location = response_headers.get("location")
                 if location:
                     require(route == "/oauth/authorize" and method == "POST"
                             and status == 302, "unexpected upstream redirect")
                     contract.enforce_callback(location)
                 require(status != 302 or location is not None, "missing redirect location")
-                response_media = response_headers.get("Content-Type", "application/json")
+                response_media = response_headers.get("content-type", "application/json")
                 require(response_media.split(";", 1)[0] in ("text/html", "application/json"),
                         "upstream content type not allowed")
                 self._reply(status, data, response_media, location)
