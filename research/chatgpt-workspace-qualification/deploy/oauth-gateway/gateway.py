@@ -34,7 +34,7 @@ ALLOWED = {
 }
 CHALLENGE = re.compile(r"[A-Za-z0-9_-]{43,128}\Z")
 TUNNEL_RESOURCE = re.compile(
-    r"https://api\.openai\.com/v1/tunnel/tunnel_[0-9a-f]{32}(?:/mcp)?\Z"
+    r"https://api\.openai\.com/v1/mcp/tunnel_[0-9a-f]{32}\Z"
 )
 
 
@@ -105,6 +105,9 @@ class Contract:
             resource = params.get("resource")
             require(resource is None or resource == self.resource,
                     "OAuth resource audience mismatch")
+            if route == "/oauth/authorize":
+                require(resource == self.resource,
+                        "authorization request must bind the exact MCP audience")
         if route == "/oauth/authorize":
             require(params.get("response_type") == "code"
                     and params.get("code_challenge_method") == "S256"
