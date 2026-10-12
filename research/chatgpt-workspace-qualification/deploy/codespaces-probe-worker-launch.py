@@ -18,6 +18,8 @@ import sys
 WORKER = "chatgpt-worker"
 WORKTREE = Path("/srv/chatgpt-worker/worktrees/Public")
 PYTHON = Path("/opt/public-chatgpt-mcp/venv/bin/python")
+# Avoid PATH lookup under the intentionally restricted launcher environment.
+RUNUSER = Path("/usr/sbin/runuser")
 CTRL_ENV = Path("/srv/chatgpt-controller/controller.env")
 REGISTRY = Path("/srv/chatgpt-controller/state/remote-workers.json")
 STATE = Path("/srv/chatgpt-worker/state")
@@ -72,6 +74,9 @@ def main() -> int:
     require(CTRL_ENV.is_file() and stat.S_IMODE(CTRL_ENV.stat().st_mode) == 0o600,
             "controller secret permission unexpected")
     require(PYTHON.exists(), "pinned Python runtime not present")
+    require(RUNUSER.is_file() and os.access(RUNUSER, os.X_OK)
+            and RUNUSER.stat().st_uid == 0,
+            "root-owned /usr/sbin/runuser missing or not executable")
     worker_uid = pwd.getpwnam(WORKER).pw_uid
     require(worker_uid != 0, "worker cannot be root")
     require(
@@ -82,7 +87,7 @@ def main() -> int:
     )
     # These tests run without any Git metadata reads and never create files.
     def denied(test_flag: str, location: str) -> bool:
-        return subprocess.run(["runuser", "-u", WORKER, "--", "test",
+        return subprocess.run([str(RUNUSER), "-u", WORKER, "--", "test",
                                test_flag, location],
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                               check=False).returncode != 0
@@ -94,7 +99,7 @@ def main() -> int:
                 "persistent worker identity/config exists; do not start an enrollment")
     print("WORKER_LAUNCH_PREFLIGHT_V1_NO_ENROLLMENT")
     print("worker_uid_and_workspace_acl=PASS")
-    base = ["runuser", "-u", WORKER, "--", "env", "-i",
+    base = [str(RUNUSER), "-u", WORKER, "--", "env", "-i",
             "HOME=/srv/chatgpt-worker/home",
             "XDG_CONFIG_HOME=/srv/chatgpt-worker/home/.config",
             "PATH=/opt/public-chatgpt-mcp/venv/bin:/usr/bin:/bin",
