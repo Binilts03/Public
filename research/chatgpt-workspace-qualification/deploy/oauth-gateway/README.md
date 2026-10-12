@@ -114,9 +114,72 @@ against the current private controller. It will correctly **refuse** before
 the controller has been migrated. The `serve` command also checks the
 dedicated identity and never exposes a public port.
 
+## Domain-free HTTPS ingress — preferred next qualification
+
+**The operator does not own a domain managed through Cloudflare.** Do not
+require domain purchase or assume a Cloudflare zone exists. The leading
+alternative is [Tailscale Funnel](https://tailscale.com/docs/features/tailscale-funnel)
+with a Tailscale-managed, publicly browser-reachable `https://<device>.<tailnet>.ts.net`
+hostname. Funnel can send public HTTPS requests to the **existing restricted
+OAuth-only gateway at `127.0.0.1:8781`**; do not point it at the controller
+on 8765, the tunnel health/admin listener on 8770, or the worker.
+The admin PIN, DCR callback allowlist, strict OAuth gateway path allowlist,
+PKCE enforcement and local MCP bearer checks remain compulsory.
+
+Official prerequisites: Tailscale account/tailnet, MagicDNS, HTTPS
+certificates, Funnel node attribute/policy, approved node identity and
+Tailscale CLI. Funnel is documented as beta and available on all Tailscale
+plans. Official [GitHub Codespaces integration](https://tailscale.com/docs/integrations/github/github-codespaces)
+uses a devcontainer TUN capability; [userspace networking](https://tailscale.com/docs/concepts/userspace-networking)
+is documented for TUN-restricted containers, but **Funnel in the existing
+Codespace with that mode has NOT been verified**. No Tailscale installation
+or login is permitted as a side effect of this runbook.
+
+**Before any live activation**, independently prove:
+
+1. The full public `*.ts.net` hostname is stable for the same persistent,
+   non-ephemeral Tailscale node, and record its expected failure behavior
+   when GitHub suspends, rebuilds or deletes the Codespace. Codespace
+   availability is not a production uptime guarantee.
+2. The Tailscale node state/auth material is privately owned by a separate
+   identity, unavailable to `chatgpt-worker` and `chatgpt-controller`,
+   and no pre-existing Tailscale configuration/service is overwritten.
+3. The published reverse proxy targets only the OAuth gateway on
+   `127.0.0.1:8781`, preserves the public Host header accepted by
+   `gateway.py`, and cannot reach `/mcp`, `/remote/*`, `/ui`,
+   download, health or arbitrary controller paths.
+4. Live external requests over verified TLS pass
+   `qualify_ingress.py external --issuer https://<device>.<tailnet>.ts.net`
+   with `404` on all forbidden paths. No identity/login interstitial may
+   interrupt ChatGPT's browser authorization or server-to-server token POST.
+5. Controller `LOCAL_SHELL_MCP_OAUTH_ISSUER` matches that exact stable
+   hostname; `LOCAL_SHELL_MCP_OAUTH_RESOURCE` equals the **live observed
+   ChatGPT tunnel-facing resource URL**. Preserve the existing signing
+   secret, PIN, token expiration, enrolled worker and Private Codespaces
+   ports. Change these settings only through a separate reviewed migration
+   with rollback; never blindly from this document.
+6. Finally validate ChatGPT's real browser authorization, S256 PKCE/DCR
+   exchange, authenticated `/mcp` invocation and Public-only workspace
+   confinement, and repeat after a Codespace restart without regenerating
+   the OAuth identity.
+
+Tailscale CLI's documented exposure shape, **not a command to run yet**,
+is `tailscale funnel --bg --https=443 http://127.0.0.1:8781`. It
+publishes that target on the internet, unlike private `tailscale serve`.
+Use only after the identity, ACL, gateway, issuer/resource and public
+denylist gates are reviewed. Tailscale's default Funnel policy may allow
+multiple tailnet members to publish; narrow this to the intended node.
+
+Cloudflare named Tunnel remains a **separate, already CI-tested
+alternative** only if an operator-controlled DNS zone later becomes
+available. Cloudflare Quick Tunnel's rotating `trycloudflare.com` URLs
+are not appropriate as a persistent OAuth issuer. The Cloudflare
+generator and its credential paths below do not apply to the chosen
+Tailscale candidate and must not be executed for this route.
+
 ## Selected external-ingress provider and staging-only operator sequence
 
-**Chosen candidate:** a separate, locally managed **Cloudflare named
+**Previously qualified alternative (not selected without an owned DNS zone):** a separate, locally managed **Cloudflare named
 Tunnel**, using a stable HTTPS hostname that the operator controls.
 The [Cloudflare ingress documentation](https://developers.cloudflare.com/tunnel/features/locally-managed-tunnels/configuration-file/)
 supports exact public hostnames, path regular expressions, a loopback HTTP
