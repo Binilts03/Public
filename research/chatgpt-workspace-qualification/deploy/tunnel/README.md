@@ -38,6 +38,10 @@ sudo /usr/bin/python3 research/chatgpt-workspace-qualification/deploy/tunnel/man
 
 This downloads **only** the pinned upstream release asset, verifies its SHA-256 *before* touching host state, refuses unexpected ZIP members/symlinks, creates the separate tunnel identity and denies it access to `/workspaces`, and stages the verified binaries. It is deliberately **not an idempotent overwrite**: an existing install must be diagnosed, not silently reset.
 
+**Controller/worker processes are not prerequisites for installing the client or provisioning its runtime key.** Codespaces can stop those processes across shutdown; this must not block a read-only download and installation. `doctor` and `run` still require a running controller and already-enrolled worker. Neither command restarts them. If either process is absent, inspect state using `codespaces-diagnose-worker-enrollment.py` before considering any recovery. Never issue another worker invitation just because a process stopped.
+
+A previous live install attempt printed `BLOCKED: controller is not running`. It failed during preflight **before the download or system modifications**. After pulling the fix and confirming CI, repeating `install` is appropriate, provided no unrelated partial installation already exists.
+
 Expected: `TUNNEL_PINNED_RELEASE_INSTALLED_NO_DAEMON`.
 
 **3. Provision a restricted runtime API key** (requires Tunnels Read + Use permissions; no key is stored in Git):
