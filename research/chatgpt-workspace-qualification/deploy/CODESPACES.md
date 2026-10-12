@@ -227,11 +227,11 @@ Docker socket denial independently checked in privileged preflight.
 
 **Proof caveat fixed before external ingress:** the original MCP remote
 verification searched JSON-serialized results for marker text. Since the
-upstream shell response includes the executed \`command\` as well as \`stdout\`,
+upstream shell response includes the executed `command` as well as `stdout`,
 the marker search could be satisfied by the echoed command even if some
 remote denial checks failed. A new verifier now demands the exact ordered
-\`stdout\` lines, checks exit code, timeout and truncation, and runs the
-negative permissions checks as standalone tests under \`set -eu\`.
+`stdout` lines, checks exit code, timeout and truncation, and runs the
+negative permissions checks as standalone tests under `set -eu`.
 
 The enrolled worker MUST NOT be invited again. The requalification below
 reads the existing worker and controller identities, compares their private
@@ -240,17 +240,17 @@ remote shell output. It registers one new short-lived OAuth *test client*
 for localhost authentication, but does not change any worker identity,
 create a worker invitation, launch a second process, or expose any port:
 
-\`\`\`bash
+```bash
 cd /workspaces/Public
 git pull --ff-only origin experiments/chatgpt-workspace-qualification
 sudo /opt/public-chatgpt-mcp/venv/bin/python \
   research/chatgpt-workspace-qualification/deploy/codespaces-reverify-enrolled-worker.py
-\`\`\`
+```
 
 Expected exact final markers:
-\`ENROLLED_WORKER_IDENTITY_BOUND_PASS\`,
-\`EXISTING_WORKER_OAUTH_PKCE_PASS\`, and
-\`EXISTING_WORKER_REMOTE_STDOUT_AND_DENIAL_PASS\`.
+`ENROLLED_WORKER_IDENTITY_BOUND_PASS`,
+`EXISTING_WORKER_OAUTH_PKCE_PASS`, and
+`EXISTING_WORKER_REMOTE_STDOUT_AND_DENIAL_PASS`.
 If the process is no longer running or any check fails, do not reenroll,
 reset the worker's identity, or expose the Codespaces port. Preserve the
 private logs/state and diagnose.
