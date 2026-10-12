@@ -266,3 +266,21 @@ def test_no_public_listener_no_other_repos_no_secret_access_in_source():
         "allow-plaintext-http", "AUTH_MODE=none",
     ]:
         assert prohibited not in source
+
+
+
+def test_gateway_listener_is_loopback_only_and_connection_bounded():
+    server = g.BoundedLoopbackServer(
+        ("127.0.0.1", 0), g.make_handler(CONTRACT, upstream_port=1),
+    )
+    try:
+        assert server.server_address[0] == "127.0.0.1"
+        assert server.request_queue_size == 16
+        assert server.daemon_threads is True
+        held = [server._connections.acquire(blocking=False) for _ in range(16)]
+        assert all(held)
+        assert not server._connections.acquire(blocking=False)
+        for _ in range(16):
+            server._connections.release()
+    finally:
+        server.server_close()
