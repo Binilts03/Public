@@ -44,6 +44,23 @@ A previous live install attempt printed `BLOCKED: controller is not running`. It
 
 Expected: `TUNNEL_PINNED_RELEASE_INSTALLED_NO_DAEMON`.
 
+**Codespaces `setgid` directory layout (verified live):** The original installation
+was root-owned with mode `2755` and inherited group `oryx`, not `0700`.
+The leading `2` is the directory setgid bit; neither group nor others
+have write permission. Its binary was root-owned `0755`, profile root-owned
+`0644`, and private runtime directory owned by `chatgpt-tunnel` at
+`0700`. The original `installed_gate` and pristine inspector mistakenly
+rejected the safe directory due to exact equality against `0755`.
+The checks now accept **exactly `0755` and `2755`**, still refusing
+other special modes or any group/other-writable directory. **No chmod or
+repair is needed for a verified root-owned `2755` installation.**
+
+After pulling this update, run `inspect-install` without any repair.
+Success includes `TUNNEL_ROOT_DIRECTORY_MODE=2755` and
+`TUNNEL_INSTALL_PERMISSIONS_ACCEPTED_NO_REPAIR`. Then proceed to the
+interactive `key` command. Do **not** run `repair-install-mode` for `2755`
+(the narrow repair remains restricted to `0700`).
+
 **For existing installations created with a restrictive `umask`:** The
 original installer requested directory mode `0755` but did not account
 for umask, so it could produce root-owned `0700` and later block the
