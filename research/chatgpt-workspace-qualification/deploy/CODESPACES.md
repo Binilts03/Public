@@ -217,6 +217,53 @@ longer references the Docker socket, which is blocked by the upstream
 `command_denylist`. The socket's inaccessibility remains verified in the
 privileged preflight under the worker UID.
 
+## Stage 3 real worker execution and independently requalified stdout
+
+Live Codespaces evidence (2026-10-12): authenticated controller and remote
+worker passed, leaving the enrolled worker running. The controller reports
+"worker_online": true and "remote_read_only_command": "PASS"; original workspace
+and controller credentials remained inaccessible to the worker, including
+Docker socket denial independently checked in privileged preflight.
+
+**Proof caveat fixed before external ingress:** the original MCP remote
+verification searched JSON-serialized results for marker text. Since the
+upstream shell response includes the executed \`command\` as well as \`stdout\`,
+the marker search could be satisfied by the echoed command even if some
+remote denial checks failed. A new verifier now demands the exact ordered
+\`stdout\` lines, checks exit code, timeout and truncation, and runs the
+negative permissions checks as standalone tests under \`set -eu\`.
+
+The enrolled worker MUST NOT be invited again. The requalification below
+reads the existing worker and controller identities, compares their private
+access credentials in memory, reuses the running worker, and verifies actual
+remote shell output. It registers one new short-lived OAuth *test client*
+for localhost authentication, but does not change any worker identity,
+create a worker invitation, launch a second process, or expose any port:
+
+\`\`\`bash
+cd /workspaces/Public
+git pull --ff-only origin experiments/chatgpt-workspace-qualification
+sudo /opt/public-chatgpt-mcp/venv/bin/python \
+  research/chatgpt-workspace-qualification/deploy/codespaces-reverify-enrolled-worker.py
+\`\`\`
+
+Expected exact final markers:
+\`ENROLLED_WORKER_IDENTITY_BOUND_PASS\`,
+\`EXISTING_WORKER_OAUTH_PKCE_PASS\`, and
+\`EXISTING_WORKER_REMOTE_STDOUT_AND_DENIAL_PASS\`.
+If the process is no longer running or any check fails, do not reenroll,
+reset the worker's identity, or expose the Codespaces port. Preserve the
+private logs/state and diagnose.
+
+**External ChatGPT app/plugin transport is a separate, still-unqualified
+gate.** A private Codespaces forwarded port enforces GitHub authentication,
+which ChatGPT's OAuth client cannot simply bypass. Public port visibility
+would remove that GitHub layer and expose the MCP/OAuth server to unauthenticated
+Internet traffic. Any external ingress must be explicitly approved and
+separately threat-modelled before use. Codespace shutdown terminates its
+running worker because this stage deliberately does not install a persistent
+supervisor. A successful localhost test is NOT production readiness.
+
 ## Public ingress is an additional user-controlled security gate
 
 Do **not** make Codespaces port 8765 public until the two results above and a host-identity review pass. GitHub's private forwarded-port authentication is not automatically compatible with ChatGPT's MCP OAuth client. A public forwarded port has no GitHub authentication; rely on the MCP OAuth boundary only after external discovery/authentication/negative tests succeed.
