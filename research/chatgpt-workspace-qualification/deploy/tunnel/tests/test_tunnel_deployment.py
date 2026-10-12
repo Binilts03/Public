@@ -256,3 +256,38 @@ def test_install_mode_ignores_restrictive_umask(tmp_path, monkeypatch):
     assert stat.S_IMODE(m.PRIVATE.stat().st_mode) == 0o700
     assert stat.S_IMODE(m.INSTALLED_PROFILE.stat().st_mode) == 0o644
     assert stat.S_IMODE(m.BINARY.stat().st_mode) == 0o755
+
+
+
+def test_codespaces_root_setgid_directory_is_accepted_without_repair(pristine_installed_tree):
+    """Reproduces live root:oryx 2755 with safe non-writable group bits."""
+    base, private, uid = pristine_installed_tree
+    base.chmod(0o2755)
+    assert stat.S_IMODE(base.stat().st_mode) == 0o2755
+    assert m.acceptable_root_install_mode(stat.S_IMODE(base.stat().st_mode))
+    assert m.verify_pristine_install(root_uid=uid, tunnel_uid=uid) == 0o2755
+    with pytest.raises(m.Refusal, match="changed before repair"):
+        m.repair_verified_directory(owner_uid=uid)
+    assert stat.S_IMODE(base.stat().st_mode) == 0o2755
+    assert list(private.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    "mode,allowed", [
+        (0o755, True), (0o2755, True),
+        (0o700, False), (0o2700, False),
+        (0o775, False), (0o2775, False),
+        (0o1775, False), (0o4755, False),
+        (0o3755, False), (0o2777, False),
+    ],
+)
+def test_root_install_mode_allowlist_denies_unexpected_bits(mode, allowed):
+    assert m.acceptable_root_install_mode(mode) is allowed
+
+
+@pytest.mark.parametrize("unsafe_mode", [0o775, 0o2775, 0o1775, 0o4755])
+def test_pristine_inspection_rejects_unsafe_special_modes(pristine_installed_tree, unsafe_mode):
+    base, _, uid = pristine_installed_tree
+    base.chmod(unsafe_mode)
+    with pytest.raises(m.Refusal, match="not an expected root-owned"):
+        m.verify_pristine_install(root_uid=uid, tunnel_uid=uid)
